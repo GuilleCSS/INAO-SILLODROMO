@@ -1,0 +1,5 @@
+temp_openface/
+__pycache__/
+*.csv
+*.pyc
+venv/
