@@ -3,11 +3,12 @@
     "output_dir": "./temp_openface",
     "cam_width": "1280",
     "cam_height": "720",
-    "x_threshold": 0.06, 
+    "camera_index": 0,
+    "x_threshold": 0.06,
     "y_threshold": 0.05,
     "conf_min": 0.70,
     "blink_hold_time": 3.5,
-    "mouse_speed": 4,
+    "mouse_speed": 5,
     "suavizado_alpha": 0.2,
     "boca_threshold": 38.0
 }

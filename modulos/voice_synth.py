@@ -1,12 +1,11 @@
-import pyttsx3
-import threading
+import subprocess
 
 def hablar_en_segundo_plano(texto):
-    def run_tts():
-        motor = pyttsx3.init()
-        motor.setProperty('rate', 150)
-        motor.say(texto)
-        motor.runAndWait()
+    """
+    Ejecuta un proceso de Python independiente para hablar.
+    Esto evita bloqueos de hilos (threads) en Windows.
+    """
+    codigo = f"import pyttsx3; motor = pyttsx3.init(); motor.setProperty('rate', 170); motor.say('{texto}'); motor.runAndWait()"
     
-    hilo = threading.Thread(target=run_tts)
-    hilo.start()
+    # Lanza el comando en segundo plano sin interrumpir la cámara
+    subprocess.Popen(["python", "-c", codigo])

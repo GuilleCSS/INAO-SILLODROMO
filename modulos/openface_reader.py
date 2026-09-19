@@ -22,10 +22,8 @@ def stream_openface_csv(csv_path):
             if line.strip():
                 header = [col.strip() for col in line.strip().split(",")]
         
-        # CAMBIO CRÍTICO: Leemos la orientación 3D de la cabeza, no de las pupilas
-        head_yaw_idx = header.index("pose_Ry") # Giro de cuello (Izquierda/Derecha)
-        head_pitch_idx = header.index("pose_Rx") # Inclinación (Arriba/Abajo)
-        
+        head_yaw_idx = header.index("pose_Ry") 
+        head_pitch_idx = header.index("pose_Rx") 
         conf_idx = header.index("confidence")
         au45_idx = header.index("AU45_c") if "AU45_c" in header else None
         y_51_idx = header.index("y_51")
@@ -61,12 +59,15 @@ def lanzar_openface():
     else:
         os.makedirs(config["output_dir"], exist_ok=True)
 
+    # Leemos el índice de la cámara desde el config.json (convertido a string)
+    cam_idx = str(config.get("camera_index", 0))
+
     comando = [
         config["openface_bin"],
-        "-device", "1",
+        "-device", cam_idx,  # <--- Usamos la variable dinámica aquí
         "-cam_width", config["cam_width"],   
         "-cam_height", config["cam_height"], 
         "-out_dir", config["output_dir"],
-        "-pose", "-aus", "-2Dfp", "-nomask" # Agregamos -pose aquí
+        "-pose", "-aus", "-2Dfp", "-nomask" 
     ]
     return subprocess.Popen(comando)
