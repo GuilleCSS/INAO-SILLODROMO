@@ -3,7 +3,7 @@
     "output_dir": "./temp_openface",
     "cam_width": "1280",
     "cam_height": "720",
-    "camera_index": 0,
+    "camera_index": 1,
     "x_threshold": 0.06,
     "y_threshold": 0.05,
     "conf_min": 0.70,

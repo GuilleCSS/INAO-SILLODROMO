@@ -4,41 +4,41 @@ from PyQt5.QtWidgets import QApplication, QMainWindow
 from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5 import uic
 
-from modulos.openface_reader import lanzar_openface, find_generated_csv, stream_openface_csv
+from modulos.mediapipe_reader import generador_mediapipe
 from modulos.gaze_controller import GazeStateController
 from modulos.hardware_serial import DomoticaController
+from modulos.yolo_security import HiloSeguridadYOLO
+from modulos.voice_synth import hablar_en_segundo_plano
 
 with open('config.json', 'r') as f:
     config = json.load(f)
 
 class HiloProcesamiento(QThread):
     senal_actualizacion = pyqtSignal(str) 
+    emergencia_activa = False # Nueva bandera para apagar el control facial
 
     def run(self):
-        self.proceso_of = lanzar_openface()
-        self.senal_actualizacion.emit("Inicializando cámara y modelos...")
-        
-        csv_file = find_generated_csv(config["output_dir"])
+        self.senal_actualizacion.emit("Inicializando MediaPipe (Modo Ligero)...")
         controller = GazeStateController()
-        
         self.senal_actualizacion.emit("¡Sistema Activo! Leyendo bioseñales...")
         
-        for hx, hy, au45, conf, y_51, y_57 in stream_openface_csv(csv_file):
+        for hx, hy, au45, conf, y_51, y_57 in generador_mediapipe():
+            # Si YOLO activó la alarma, ignoramos lo que haga el rostro
+            if self.emergencia_activa:
+                continue
+                
             estado_mirada = controller.process_frame(hx, hy, au45, conf, y_51, y_57)
             if estado_mirada:
                 self.senal_actualizacion.emit(f"Estado: {estado_mirada}")
 
     def detener(self):
-        if hasattr(self, 'proceso_of'):
-            self.proceso_of.terminate()
+        pass
 
 class ControlCentral(QMainWindow):
     def __init__(self):
         super().__init__()
         uic.loadUi("interfaz.ui", self)
         
-        # --- HACK DEFINITIVO: DESTRUIR LÍMITES DE QT DESIGNER ---
-        # Recolectamos todos los botones que diseñaste
         botones = []
         if hasattr(self, 'btn_avanzar'): botones.append(self.btn_avanzar)
         if hasattr(self, 'btn_luz'): botones.append(self.btn_luz)
@@ -46,7 +46,6 @@ class ControlCentral(QMainWindow):
         if hasattr(self, 'btn_girar_der'): botones.append(self.btn_girar_der)
         if hasattr(self, 'btn_detener'): botones.append(self.btn_detener)
         
-        # Forzamos a que su tamaño máximo sea infinito y los desvinculamos de layouts fantasma
         for btn in botones:
             btn.setMinimumSize(0, 0)
             btn.setMaximumSize(16777215, 16777215)
@@ -69,21 +68,34 @@ class ControlCentral(QMainWindow):
         self.hilo.senal_actualizacion.connect(self.actualizar_label)
         self.hilo.start()
 
-    # --- CONTROL TOTAL DE LA GEOMETRÍA ---
+        # Índice 0 para que YOLO tome la cámara externa de tu setup
+        self.hilo_yolo = HiloSeguridadYOLO(camera_index=0)
+        self.hilo_yolo.senal_emergencia.connect(self.gestionar_emergencia)
+        self.hilo_yolo.start()
+
+    def gestionar_emergencia(self, hay_peligro):
+        # Transmitimos la bandera al hilo de MediaPipe para bloquearlo o liberarlo
+        self.hilo.emergencia_activa = hay_peligro 
+        
+        if hay_peligro:
+            self.domotica.detener() # Envia el freno al hardware
+            if hasattr(self, 'label_estado'):
+                self.label_estado.setText("¡PELIGRO: OBSTÁCULO! FRENADO AUTOMÁTICO")
+            hablar_en_segundo_plano("Alerta, obstáculo al frente")
+        else:
+            if hasattr(self, 'label_estado'):
+                self.label_estado.setText("Camino libre. Reanudando...")
+            hablar_en_segundo_plano("Camino libre")
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        
-        # Tomamos el ancho y alto real del monitor
         w = self.width()
         h = self.height()
         
-        # Evitamos cálculos si la ventana está minimizada
-        if w == 0 or h == 0:
-            return
+        if w == 0 or h == 0: return
             
         h_tercio = h // 3
         
-        # 1. Ajuste matemático exacto (sin huecos grises)
         if hasattr(self, 'btn_avanzar'):
             self.btn_avanzar.setGeometry(0, 0, w, h_tercio)
         if hasattr(self, 'btn_luz'):
@@ -93,27 +105,19 @@ class ControlCentral(QMainWindow):
         if hasattr(self, 'btn_girar_der'):
             self.btn_girar_der.setGeometry(w // 2, h_tercio, w - (w // 2), h_tercio)
             
-        # 2. Renderizado del círculo rojo
         if hasattr(self, 'btn_detener'):
             size = int(min(w, h) * 0.45) 
             self.btn_detener.setGeometry((w - size) // 2, (h - size) // 2, size, size)
-            
-            # Inyectamos el CSS puro
             self.btn_detener.setStyleSheet(f"""
                 QPushButton {{
-                    background-color: #E63946; 
-                    color: white;
-                    border-radius: {size // 2}px; 
-                    border: 4px solid #900C3F;
-                    font-size: 26px; 
-                    font-weight: bold;
+                    background-color: #E63946; color: white;
+                    border-radius: {size // 2}px; border: 4px solid #900C3F;
+                    font-size: 26px; font-weight: bold;
                 }}
                 QPushButton:hover {{ background-color: #FF4D4D; }}
             """)
-            # Lo traemos al frente para que no se oculte
             self.btn_detener.raise_()
 
-        # Aseguramos que el texto de estado sea visible
         if hasattr(self, 'label_estado'):
             self.label_estado.raise_()
 
@@ -123,6 +127,8 @@ class ControlCentral(QMainWindow):
 
     def closeEvent(self, event):
         self.hilo.detener()
+        if hasattr(self, 'hilo_yolo'):
+            self.hilo_yolo.detener()
         event.accept()
 
 if __name__ == '__main__':
