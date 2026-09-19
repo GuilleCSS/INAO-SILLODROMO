@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow
 from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5 import uic
 
-from modulos.openface_reader import lanzar_openface, find_generated_csv, stream_openface_csv
+from modulos.mediapipe_reader import generador_mediapipe
 from modulos.gaze_controller import GazeStateController
 from modulos.hardware_serial import DomoticaController
 
@@ -15,22 +15,19 @@ class HiloProcesamiento(QThread):
     senal_actualizacion = pyqtSignal(str) 
 
     def run(self):
-        self.proceso_of = lanzar_openface()
-        self.senal_actualizacion.emit("Inicializando cámara y modelos...")
-        
-        csv_file = find_generated_csv(config["output_dir"])
+        self.senal_actualizacion.emit("Inicializando MediaPipe (Modo Ligero)...")
         controller = GazeStateController()
-        
         self.senal_actualizacion.emit("¡Sistema Activo! Leyendo bioseñales...")
         
-        for hx, hy, au45, conf, y_51, y_57 in stream_openface_csv(csv_file):
+        # Consumimos los datos directamente del nuevo motor de MediaPipe
+        for hx, hy, au45, conf, y_51, y_57 in generador_mediapipe():
             estado_mirada = controller.process_frame(hx, hy, au45, conf, y_51, y_57)
             if estado_mirada:
                 self.senal_actualizacion.emit(f"Estado: {estado_mirada}")
 
     def detener(self):
-        if hasattr(self, 'proceso_of'):
-            self.proceso_of.terminate()
+        # Ya no hay proceso externo de OpenFace que matar, solo se detiene el hilo
+        pass
 
 class ControlCentral(QMainWindow):
     def __init__(self):

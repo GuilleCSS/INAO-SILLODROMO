@@ -50,7 +50,7 @@
     <property name="maximumSize">
      <size>
       <width>16777215</width>
-      <height>200</height>
+      <height>16777215</height>
      </size>
     </property>
     <property name="styleSheet">
@@ -91,7 +91,7 @@ QPushButton:hover { background-color: #F39C12; }</string>
     <property name="maximumSize">
      <size>
       <width>16777215</width>
-      <height>300</height>
+      <height>16777215</height>
      </size>
     </property>
     <property name="styleSheet">
@@ -135,7 +135,7 @@ QPushButton:hover { background-color: #2980B9; }</string>
     <property name="maximumSize">
      <size>
       <width>16777215</width>
-      <height>300</height>
+      <height>16777215</height>
      </size>
     </property>
     <property name="styleSheet">
@@ -197,7 +197,7 @@ QPushButton:pressed {
     <property name="maximumSize">
      <size>
       <width>16777215</width>
-      <height>200</height>
+      <height>16777215</height>
      </size>
     </property>
     <property name="styleSheet">
@@ -238,7 +238,7 @@ QPushButton:hover { background-color: #27AE60; }</string>
     <property name="maximumSize">
      <size>
       <width>16777215</width>
-      <height>300</height>
+      <height>16777215</height>
      </size>
     </property>
     <property name="styleSheet">
