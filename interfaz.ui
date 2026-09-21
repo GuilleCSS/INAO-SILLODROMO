@@ -324,7 +324,7 @@ QPushButton#btnCalibrar:pressed {
      </widget>
     </item>
     <item>
-     <layout class="QHBoxLayout" name="layoutCuerpo" stretch="3,7">
+     <layout class="QHBoxLayout" name="layoutCuerpo" stretch="4,7">
       <property name="spacing">
        <number>16</number>
       </property>

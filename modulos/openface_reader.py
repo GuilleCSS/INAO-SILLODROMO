@@ -2,10 +2,45 @@ import os
 import time
 import glob
 import subprocess
+import threading
+import ctypes
 import json
+
+if os.name == "nt":
+    from ctypes import wintypes
 
 with open('config.json', 'r') as f:
     config = json.load(f)
+
+
+def _ocultar_ventanas_proceso(pid, intervalo=0.3):
+    """
+    FeatureExtraction.exe abre su propia ventana de rastreo por defecto, y
+    el flag que se supone la apaga (-q) está roto/quitado en versiones
+    recientes de OpenFace — no hay forma confiable de pedirle por línea de
+    comandos que no la muestre. La ocultamos por Windows API en cuanto
+    aparece, para que no tape la interfaz de la app.
+    """
+    if os.name != "nt":
+        return
+
+    user32 = ctypes.windll.user32
+    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def _callback(hwnd, _lparam):
+        proceso_pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(proceso_pid))
+        if proceso_pid.value == pid and user32.IsWindowVisible(hwnd):
+            user32.ShowWindow(hwnd, 0)  # SW_HIDE
+        return True
+
+    enum_proc = WNDENUMPROC(_callback)
+    while True:
+        try:
+            user32.EnumWindows(enum_proc, 0)
+        except Exception:
+            return
+        time.sleep(intervalo)
 
 def find_generated_csv(directory):
     while True:
@@ -73,9 +108,16 @@ def lanzar_openface():
     comando = [
         config["openface_bin"],
         "-device", cam_idx,  # <--- Usamos la variable dinámica aquí
-        "-cam_width", config["cam_width"],   
-        "-cam_height", config["cam_height"], 
+        "-cam_width", config["cam_width"],
+        "-cam_height", config["cam_height"],
         "-out_dir", config["output_dir"],
-        "-pose", "-aus", "-2Dfp", "-nomask" 
+        "-pose", "-aus", "-2Dfp", "-nomask"
     ]
-    return subprocess.Popen(comando)
+    proceso = subprocess.Popen(comando)
+
+    if os.name == "nt":
+        threading.Thread(
+            target=_ocultar_ventanas_proceso, args=(proceso.pid,), daemon=True
+        ).start()
+
+    return proceso

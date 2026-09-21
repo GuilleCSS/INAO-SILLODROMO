@@ -3,7 +3,7 @@
     "output_dir": "./temp_openface",
     "cam_width": "1280",
     "cam_height": "720",
-    "camera_index": 1,
+    "camera_index": 0,
     "serial_port": "COM5",
     "serial_baudrate": 9600,
     "airwheel_neutro": 128,
