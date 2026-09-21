@@ -1,1087 +1,393 @@
 import time
 import json
-import statistics
-
-from collections import deque
-
+import os
 from .mouse_action import (
-    mover_cursor,
-    presionar_mouse,
-    soltar_mouse,
-    feedback_clic_inmediato
+    mover_cursor, mover_cursor_absoluto, presionar_clic, soltar_clic,
+    posicion_cursor, tamano_pantalla,
 )
-
 from .voice_synth import hablar_en_segundo_plano
 
-
-# ============================================================
-# CONFIGURACIÓN
-# ============================================================
-
-with open("config.json", "r") as f:
+with open('config.json', 'r') as f:
     config = json.load(f)
 
+RUTA_CALIBRACION = "calibracion.json"
+
 
 # ============================================================
-# CONTROLADOR
+# CALIBRACIÓN (mapeo absoluto cabeza -> pantalla)
 # ============================================================
 
-class GazeStateController:
+class Calibrador:
+    """
+    Recolecta 5 posturas de cabeza (centro + 4 extremos cómodos) para poder
+    mapear la orientación de la cabeza directo a un punto de pantalla, en
+    vez de usarla como acelerador de cursor.
+    """
+
+    PUNTOS = ["centro", "izquierda", "derecha", "arriba", "abajo"]
+    ETIQUETAS = {
+        "centro": "Mira al frente, relajado",
+        "izquierda": "Gira la cabeza cómodamente a la izquierda",
+        "derecha": "Gira la cabeza cómodamente a la derecha",
+        "arriba": "Inclina la cabeza hacia arriba",
+        "abajo": "Inclina la cabeza hacia abajo",
+    }
 
     def __init__(self):
+        self.muestras = {}
 
-        # ====================================================
-        # SISTEMA
-        # ====================================================
+    def registrar(self, nombre, hx, hy):
+        self.muestras[nombre] = (float(hx), float(hy))
 
+    def completo(self):
+        return all(p in self.muestras for p in self.PUNTOS)
+
+    def guardar(self):
+        with open(RUTA_CALIBRACION, "w") as f:
+            json.dump(self.muestras, f, indent=2)
+        return self.muestras
+
+
+def cargar_calibracion():
+    """Dict de calibración guardado, o None si no existe / está incompleto."""
+    if not os.path.exists(RUTA_CALIBRACION):
+        return None
+    try:
+        with open(RUTA_CALIBRACION, "r") as f:
+            datos = json.load(f)
+        if all(p in datos for p in Calibrador.PUNTOS):
+            return datos
+    except (ValueError, OSError):
+        pass
+    return None
+
+
+def actualizar_centro(hx, hy):
+    """
+    Recalibra solo el punto "centro" (recentrado rápido), sin repetir los 4
+    extremos. Corrige el caso típico de que la postura neutral de la persona
+    se corra un poco durante la sesión (se acomoda en la silla, se cansa,
+    etc.) y el cursor termine pegado en un borde por ese desfase acumulado.
+    """
+    datos = cargar_calibracion()
+    if datos is None:
+        return False
+    datos["centro"] = [float(hx), float(hy)]
+    with open(RUTA_CALIBRACION, "w") as f:
+        json.dump(datos, f, indent=2)
+    return True
+
+
+class GazeStateController:
+    """
+    Traduce las bioseñales de OpenFace en acciones de mouse.
+
+    - Cabeza  -> posiciona el cursor.
+                 Con calibración guardada: apunta directo a un punto de
+                 pantalla (control por posición, como un mouse real).
+                 Sin calibración: modo anterior por velocidad (la cabeza
+                 acelera el cursor como un joystick), para no romper nada
+                 en equipos donde aún no se calibró.
+    - Boca    -> abrirla PRESIONA el clic y lo MANTIENE; cerrarla lo SUELTA.
+    - Ojos    -> cerrarlos `blink_hold_time` segundos pausa / reanuda el sistema.
+    """
+
+    def __init__(self):
         self.system_enabled = True
-
         self.blink_start_time = None
-
         self.blink_action_triggered = False
 
-
-        # ====================================================
-        # CALIBRACIÓN
-        # ====================================================
-
-        self.calibrado = False
-
-        self.muestras_calibracion_x = []
-        self.muestras_calibracion_y = []
-
-        self.frames_calibracion = int(
-            config.get(
-                "cursor_calibration_frames",
-                30
-            )
-        )
-
-        self.centro_x = 0.0
-        self.centro_y = 0.0
-
-
-        # ====================================================
-        # FILTRO MEDIANA
-        # ====================================================
-
-        ventana = int(
-            config.get(
-                "cursor_median_window",
-                5
-            )
-        )
-
-        if ventana < 1:
-            ventana = 1
-
-        if ventana % 2 == 0:
-            ventana += 1
-
-        self.historial_x = deque(
-            maxlen=ventana
-        )
-
-        self.historial_y = deque(
-            maxlen=ventana
-        )
-
-
-        # ====================================================
-        # EMA
-        # ====================================================
-
         self.hx_suavizado = 0.0
         self.hy_suavizado = 0.0
 
-
-        # ====================================================
-        # ESTADO DE LOS EJES
-        # ====================================================
-
-        self.estado_x = 0
-        self.estado_y = 0
-
-
-        # ====================================================
-        # BOCA / CLIC
-        # ====================================================
-
-        self.boca_abierta = False
-
-        self.ultimo_clic_tiempo = 0.0
-
-        self.cursor_bloqueado_hasta = 0.0
-
-
-        # ====================================================
-        # MENSAJES TEMPORALES
-        # ====================================================
-
-        self.mensaje_temporal = None
-
-        self.mensaje_hasta = 0.0
-
-
-        # ====================================================
-        # TIEMPO
-        # ====================================================
-
-        self.ultimo_frame_tiempo = (
-            time.perf_counter()
-        )
-
-
-    # ========================================================
-    # REINICIAR CALIBRACIÓN
-    # ========================================================
-
-    def reiniciar_calibracion(self):
-
-        self.calibrado = False
-
-        self.muestras_calibracion_x.clear()
-        self.muestras_calibracion_y.clear()
-
-        self.historial_x.clear()
-        self.historial_y.clear()
-
-        self.hx_suavizado = 0.0
-        self.hy_suavizado = 0.0
-
-        self.estado_x = 0
-        self.estado_y = 0
-
-
-    # ========================================================
-    # MENSAJE TEMPORAL
-    # ========================================================
-
-    def mostrar_temporal(
-        self,
-        texto,
-        duracion=0.5
-    ):
-
-        self.mensaje_temporal = texto
-
-        self.mensaje_hasta = (
-            time.time()
-            +
-            duracion
-        )
-
-
-    # ========================================================
-    # FILTRO ADAPTATIVO
-    # ========================================================
-
-    def filtrar_eje(
-        self,
-        valor,
-        historial,
-        valor_anterior
-    ):
-
-        historial.append(
-            valor
-        )
-
-        valor_mediana = statistics.median(
-            historial
-        )
-
-        alpha_quieto = float(
-            config.get(
-                "cursor_alpha_quiet",
-                0.10
-            )
-        )
-
-        alpha_rapido = float(
-            config.get(
-                "cursor_alpha_fast",
-                0.45
-            )
-        )
-
-        escala = float(
-            config.get(
-                "cursor_motion_scale",
-                0.12
-            )
-        )
-
-        diferencia = abs(
-            valor_mediana
-            -
-            valor_anterior
-        )
-
-        intensidad = min(
-            diferencia
-            /
-            max(
-                escala,
-                1e-6
-            ),
-            1.0
-        )
-
-        alpha = (
-            alpha_quieto
-            +
-            (
-                alpha_rapido
-                -
-                alpha_quieto
-            )
-            *
-            intensidad
-        )
-
-        return (
-            alpha * valor_mediana
-            +
-            (1.0 - alpha)
-            *
-            valor_anterior
-        )
-
-
-    # ========================================================
-    # HISTÉRESIS
-    # ========================================================
-
-    def actualizar_estado_eje(
-        self,
-        valor,
-        estado,
-        umbral_on,
-        umbral_off
-    ):
-
-        # ----------------------------------------------------
-        # CENTRADO
-        # ----------------------------------------------------
-
-        if estado == 0:
-
-            if valor >= umbral_on:
-                return 1
-
-            if valor <= -umbral_on:
-                return -1
-
-            return 0
-
-
-        # ----------------------------------------------------
-        # POSITIVO
-        # ----------------------------------------------------
-
-        if estado == 1:
-
-            if valor <= -umbral_on:
-                return -1
-
-            if valor <= umbral_off:
-                return 0
-
-            return 1
-
-
-        # ----------------------------------------------------
-        # NEGATIVO
-        # ----------------------------------------------------
-
-        if estado == -1:
-
-            if valor >= umbral_on:
-                return 1
-
-            if valor >= -umbral_off:
-                return 0
-
-            return -1
-
-
-        return 0
-
-
-    # ========================================================
-    # PROCESAR FRAME
-    # ========================================================
-
-    def process_frame(
-        self,
-        hx,
-        hy,
-        au45_c,
-        conf,
-        y_51,
-        y_57
-    ):
-
-        current_time = time.time()
-
-        perf_now = time.perf_counter()
-
-        dt = (
-            perf_now
-            -
-            self.ultimo_frame_tiempo
-        )
-
-        self.ultimo_frame_tiempo = perf_now
-
-
-        # ====================================================
-        # NORMALIZAR DELTA DE TIEMPO
-        # ====================================================
-
-        dt = max(
-            1.0 / 120.0,
-            min(
-                dt,
-                1.0 / 15.0
-            )
-        )
-
-
-        # ====================================================
-        # CONFIANZA
-        # ====================================================
-
-        if conf < float(
-            config.get(
-                "conf_min",
-                0.70
-            )
-        ):
-
-            self.blink_start_time = None
-
-            self.estado_x = 0
-            self.estado_y = 0
-
-            return None
-
-
-        # ====================================================
-        # DETECTAR OJOS CERRADOS
-        # ====================================================
-
-        is_eyes_closed = (
-            au45_c >= 1.0
-        )
-
-
-        # ====================================================
-        # PAUSA POR OJOS CERRADOS
-        # ====================================================
-
-        if is_eyes_closed:
-
-            if self.blink_start_time is None:
-
-                self.blink_start_time = (
-                    current_time
-                )
-
-            elapsed = (
-                current_time
-                -
-                self.blink_start_time
-            )
-
-            if (
-                elapsed
-                >=
-                float(
-                    config.get(
-                        "blink_hold_time",
-                        3.5
-                    )
-                )
-                and
-                not self.blink_action_triggered
-            ):
-
-                self.system_enabled = (
-                    not self.system_enabled
-                )
-
-                self.blink_action_triggered = True
-
-                if self.system_enabled:
-
-                    estado = "Activado"
-
-                    self.reiniciar_calibracion()
-
-                else:
-
-                    estado = "Pausado"
-
-                hablar_en_segundo_plano(
-                    f"Sistema {estado}"
-                )
-
-                self.mostrar_temporal(
-                    f"SISTEMA {estado.upper()}",
-                    1.2
-                )
-
-
-            # Mientras los ojos están cerrados,
-            # NO movemos el cursor.
-            return (
-                self.mensaje_temporal
-                if current_time < self.mensaje_hasta
-                else
-                "OJOS CERRADOS"
-            )
-
-
+        # Estado del clic sostenido
+        self.clic_mantenido = False
+        self._frames_abierta = 0
+        self._frames_cerrada = 0
+        self.ultima_apertura = 0.0
+        self._ultimo_rostro_ok = time.time()
+        self._puntos = []
+
+        # Imán hacia botones/tiles (asistencia de precisión)
+        self._objetivos = []       # lista de (cx, cy, radio) en coords. de pantalla
+        self._iman_activo = False
+
+        # Calibración para control por posición absoluta
+        self.calibracion = cargar_calibracion()
+        self.ancho_pantalla, self.alto_pantalla = tamano_pantalla()
+
+    # --------------------------------------------------------
+    # OBJETIVOS PARA EL IMÁN DE PRECISIÓN / CALIBRACIÓN
+    # --------------------------------------------------------
+
+    def set_objetivos(self, objetivos):
+        """Actualiza los botones "imantados" (cx, cy, radio) en coords. de pantalla."""
+        self._objetivos = objetivos or []
+
+    def recargar_calibracion(self):
+        """Vuelve a leer calibracion.json (se llama al terminar el asistente)."""
+        self.calibracion = cargar_calibracion()
+
+    # --------------------------------------------------------
+    # CLIC SOSTENIDO
+    # --------------------------------------------------------
+
+    def _presionar(self):
+        if not self.clic_mantenido:
+            presionar_clic()
+            self.clic_mantenido = True
+        self._frames_cerrada = 0
+
+    def soltar(self):
+        """Suelta el clic si estaba presionado (seguro llamarlo siempre)."""
+        if self.clic_mantenido:
+            soltar_clic()
+            self.clic_mantenido = False
+        self._frames_abierta = 0
+        self._frames_cerrada = 0
+
+    def _actualizar_boca(self, apertura):
+        umbral_on = config.get("boca_threshold", 25.0)
+        # Histéresis: se suelta con un umbral más bajo para evitar parpadeos del clic
+        umbral_off = config.get("boca_threshold_release", umbral_on * 0.8)
+        frames_req = int(config.get("boca_frames", 2))
+
+        if not self.clic_mantenido:
+            self._frames_abierta = self._frames_abierta + 1 if apertura > umbral_on else 0
+            if self._frames_abierta >= frames_req:
+                self._presionar()
         else:
+            self._frames_cerrada = self._frames_cerrada + 1 if apertura < umbral_off else 0
+            if self._frames_cerrada >= frames_req:
+                self.soltar()
 
+    # --------------------------------------------------------
+    # ESTADO PARA LA INTERFAZ
+    # --------------------------------------------------------
+
+    def _estado(self, rostro, direccion=""):
+        return {
+            "sistema": self.system_enabled,
+            "rostro": rostro,
+            "clic": self.clic_mantenido,
+            "apertura": self.ultima_apertura,
+            "hx": self.hx_suavizado,
+            "hy": self.hy_suavizado,
+            "direccion": direccion or "CENTRO",
+            "puntos": self._puntos,
+            "iman": self._iman_activo,
+            "calibrado": self.calibracion is not None,
+        }
+
+    # --------------------------------------------------------
+    # PROCESAMIENTO POR FRAME
+    # --------------------------------------------------------
+
+    def process_frame(self, hx, hy, au45_c, conf, y_51, y_57, puntos=None):
+        current_time = time.time()
+        self._puntos = puntos or []
+
+        # 0. ROSTRO NO DETECTADO -> por seguridad se suelta el clic
+        if conf < config["conf_min"]:
+            self.blink_start_time = None
+            tolerancia = config.get("rostro_perdido_tiempo", 0.3)
+            if self.clic_mantenido and (current_time - self._ultimo_rostro_ok) > tolerancia:
+                self.soltar()
+            return self._estado(rostro=False)
+
+        self._ultimo_rostro_ok = current_time
+        is_eyes_closed = (au45_c >= 1.0)
+
+        # 1. MECANISMO DE PAUSA (ojos cerrados)
+        if is_eyes_closed:
+            if self.blink_start_time is None:
+                self.blink_start_time = current_time
+
+            elapsed = current_time - self.blink_start_time
+            if elapsed >= config["blink_hold_time"] and not self.blink_action_triggered:
+                self.system_enabled = not self.system_enabled
+                self.blink_action_triggered = True
+                if not self.system_enabled:
+                    self.soltar()
+                estado = "Activado" if self.system_enabled else "Pausado"
+                hablar_en_segundo_plano(f"Sistema {estado}")
+        else:
             self.blink_start_time = None
             self.blink_action_triggered = False
 
-
-        # ====================================================
-        # SISTEMA PAUSADO
-        # ====================================================
-
         if not self.system_enabled:
+            return self._estado(rostro=True)
 
-            return "PAUSADO"
+        # 2. CLIC SOSTENIDO POR BOCA
+        self.ultima_apertura = y_57 - y_51
+        self._actualizar_boca(self.ultima_apertura)
 
+        # 3. SUAVIZADO EMA PARA LA CABEZA
+        alpha = config.get("suavizado_alpha", 0.2)
+        self.hx_suavizado = (alpha * hx) + ((1 - alpha) * self.hx_suavizado)
+        self.hy_suavizado = (alpha * hy) + ((1 - alpha) * self.hy_suavizado)
 
-        # ====================================================
-        # CALIBRACIÓN AUTOMÁTICA
-        # ====================================================
+        # 4. POSICIÓN DEL CURSOR (el cursor se mueve aunque el clic esté presionado)
+        if self.calibracion:
+            x, y = self._posicion_absoluta(self.hx_suavizado, self.hy_suavizado)
+            x, y = self._aplicar_iman_absoluto(x, y)
+            mover_cursor_absoluto(x, y)
+            x_dir, y_dir = self._direccion_absoluta(self.hx_suavizado, self.hy_suavizado)
+        else:
+            dx, dy, x_dir, y_dir = self.calcular_movimiento(self.hx_suavizado, self.hy_suavizado)
+            mover_cursor(dx, dy)
 
-        if not self.calibrado:
+        return self._estado(rostro=True, direccion=f"{y_dir} {x_dir}".strip())
 
-            self.muestras_calibracion_x.append(
-                hx
-            )
+    # ==========================================================
+    # MODO POR POSICIÓN ABSOLUTA (requiere calibración)
+    # ==========================================================
 
-            self.muestras_calibracion_y.append(
-                hy
-            )
+    def _interpolar_eje(self, valor, v_centro, v_min, v_max):
+        """
+        Convierte un ángulo de cabeza a un valor normalizado en [-1, 1]
+        usando el centro y los extremos cómodos DE ESA PERSONA (no un
+        umbral genérico), así el mapeo se ajusta a su rango real de movimiento.
 
-            cantidad = len(
-                self.muestras_calibracion_x
-            )
+        Se agrega un margen (`calibracion_margen`) más allá de cada extremo
+        calibrado: llegar exactamente al punto que se registró en la
+        calibración no pega el cursor al 100% del borde de inmediato, solo
+        si la cabeza va un poco más allá. Sin esto, cualquier variación
+        normal (la postura de calibración casi nunca es idéntica a como se
+        mueve la persona en el uso real) deja el cursor trabado en un borde.
+        """
+        margen = 1 + config.get("calibracion_margen", 0.15)
+        if valor >= v_centro:
+            rango = ((v_max - v_centro) * margen) or 1e-6
+            t = (valor - v_centro) / rango
+        else:
+            rango = ((v_centro - v_min) * margen) or 1e-6
+            t = (valor - v_centro) / rango
+        return max(-1.0, min(1.0, t))
 
-            if cantidad >= self.frames_calibracion:
+    def _posicion_absoluta(self, hx, hy):
+        centro_x, centro_y = self.calibracion["centro"]
+        izq_x, _ = self.calibracion["izquierda"]
+        der_x, _ = self.calibracion["derecha"]
+        _, arriba_y = self.calibracion["arriba"]
+        _, abajo_y = self.calibracion["abajo"]
 
-                self.centro_x = statistics.median(
-                    self.muestras_calibracion_x
-                )
+        # Curva de precisión: da más resolución de pantalla por grado de
+        # cabeza cerca del centro (gamma > 1), sin perder alcance a los
+        # bordes. gamma = 1 sería un mapeo lineal puro.
+        gamma = config.get("curva_precision", 1.3)
 
-                self.centro_y = statistics.median(
-                    self.muestras_calibracion_y
-                )
+        nx = self._interpolar_eje(hx, centro_x, izq_x, der_x)
+        ny = self._interpolar_eje(hy, centro_y, arriba_y, abajo_y)
 
-                self.calibrado = True
+        nx = (abs(nx) ** gamma) * (1 if nx >= 0 else -1)
+        ny = (abs(ny) ** gamma) * (1 if ny >= 0 else -1)
 
-                self.historial_x.clear()
-                self.historial_y.clear()
-
-                self.hx_suavizado = 0.0
-                self.hy_suavizado = 0.0
-
-                self.estado_x = 0
-                self.estado_y = 0
-
-                self.mostrar_temporal(
-                    "CALIBRADO ✓",
-                    0.8
-                )
-
-                return "CALIBRADO ✓"
-
-
-            progreso = int(
-                cantidad
-                /
-                self.frames_calibracion
-                *
-                100
-            )
-
-            return (
-                f"CALIBRANDO {progreso}%"
-            )
-
-
-        # ====================================================
-        # RESTAR CENTRO
-        # ====================================================
-
-        hx_centrado = (
-            hx
-            -
-            self.centro_x
+        x = (self.ancho_pantalla / 2) + nx * (self.ancho_pantalla / 2)
+        y = (self.alto_pantalla / 2) + ny * (self.alto_pantalla / 2)
+        return (
+            max(0, min(self.ancho_pantalla - 1, x)),
+            max(0, min(self.alto_pantalla - 1, y)),
         )
 
-        hy_centrado = (
-            hy
-            -
-            self.centro_y
-        )
-
-
-        # ====================================================
-        # GANANCIA INDEPENDIENTE X
-        # ====================================================
-
-        if hx_centrado < 0:
-
-            hx_centrado *= float(
-                config.get(
-                    "cursor_left_gain",
-                    1.0
-                )
-            )
-
-        elif hx_centrado > 0:
-
-            hx_centrado *= float(
-                config.get(
-                    "cursor_right_gain",
-                    1.0
-                )
-            )
-
-
-        # ====================================================
-        # GANANCIA INDEPENDIENTE Y
-        # ====================================================
-
-        if hy_centrado < 0:
-
-            hy_centrado *= float(
-                config.get(
-                    "cursor_up_gain",
-                    1.0
-                )
-            )
-
-        elif hy_centrado > 0:
-
-            hy_centrado *= float(
-                config.get(
-                    "cursor_down_gain",
-                    1.0
-                )
-            )
-
-
-        # ====================================================
-        # CORRECCIÓN MUY LENTA DEL CENTRO
-        #
-        # Reduce drift si el usuario cambia levemente
-        # de postura con el tiempo.
-        # ====================================================
-
-        zona_adaptacion = float(
-            config.get(
-                "cursor_center_adapt_zone",
-                0.06
-            )
-        )
-
-        alpha_centro = float(
-            config.get(
-                "cursor_center_adapt_alpha",
-                0.0025
-            )
-        )
-
-        if (
-            abs(hx_centrado) < zona_adaptacion
-            and
-            abs(hy_centrado) < zona_adaptacion
-            and
-            not self.boca_abierta
-        ):
-
-            self.centro_x = (
-                (1.0 - alpha_centro)
-                *
-                self.centro_x
-                +
-                alpha_centro
-                *
-                hx
-            )
-
-            self.centro_y = (
-                (1.0 - alpha_centro)
-                *
-                self.centro_y
-                +
-                alpha_centro
-                *
-                hy
-            )
-
-
-        # ====================================================
-        # CLIC POR BOCA
-        # ====================================================
-
-        # ====================================================
-        # CONTROL DEL MOUSE POR BOCA
-        #
-        # Boca abierta  -> mouseDown
-        # Boca cerrada  -> mouseUp
-        # ====================================================
-
-        apertura_boca = (
-            y_57
-            -
-            y_51
-        )
-
-        umbral_abrir = float(
-            config.get(
-                "mp_mouth_open_threshold",
-                22.0
-            )
-        )
-
-        umbral_cerrar = float(
-            config.get(
-                "mp_mouth_close_threshold",
-                15.0
-            )
-        )
-
-
-        # ====================================================
-        # BOCA CERRADA -> ABIERTA
-        # ====================================================
-
-        if (
-            not self.boca_abierta
-            and
-            apertura_boca >= umbral_abrir
-        ):
-
-            self.boca_abierta = True
-
-            # Mantener presionado el botón izquierdo
-            presionar_mouse()
-
-            # Feedback inmediato
-            feedback_clic_inmediato()
-
-            self.mostrar_temporal(
-                "PRESIONANDO",
-                0.30
-            )
-
-
-        # ====================================================
-        # BOCA ABIERTA -> CERRADA
-        # ====================================================
-
-        elif (
-            self.boca_abierta
-            and
-            apertura_boca <= umbral_cerrar
-        ):
-
-            self.boca_abierta = False
-
-            # Soltar botón izquierdo
-            soltar_mouse()
-
-            self.mostrar_temporal(
-                "LIBERADO",
-                0.30
-            )
-
-        # ----------------------------------------------------
-        # BOCA SE ABRE
-        # ----------------------------------------------------
-
-        if (
-            not self.boca_abierta
-            and
-            apertura_boca >= umbral_abrir
-        ):
-
-            self.boca_abierta = True
-
-            if (
-                current_time
-                -
-                self.ultimo_clic_tiempo
-            ) >= cooldown:
-
-                hacer_clic()
-
-                feedback_clic_inmediato()
-
-                self.ultimo_clic_tiempo = (
-                    current_time
-                )
-
-                self.cursor_bloqueado_hasta = (
-                    current_time
-                    +
-                    float(
-                        config.get(
-                            "click_freeze",
-                            0.18
-                        )
-                    )
-                )
-
-                self.mostrar_temporal(
-                    "CLIC ✓",
-                    float(
-                        config.get(
-                            "click_feedback_seconds",
-                            0.45
-                        )
-                    )
-                )
-
-
-        # ----------------------------------------------------
-        # BOCA SE CIERRA
-        # ----------------------------------------------------
-
-        elif (
-            self.boca_abierta
-            and
-            apertura_boca <= umbral_cerrar
-        ):
-
-            self.boca_abierta = False
-
-        # ====================================================
-        # MIENTRAS LA BOCA ESTÁ ABIERTA:
-        # NO MOVER EL CURSOR
-        # ====================================================
-
-        if self.boca_abierta:
-
-            return "PRESIONANDO"
-
-
-        # ====================================================
-        # FILTRADO
-        # ====================================================
-
-        self.hx_suavizado = (
-            self.filtrar_eje(
-                hx_centrado,
-                self.historial_x,
-                self.hx_suavizado
-            )
-        )
-
-        self.hy_suavizado = (
-            self.filtrar_eje(
-                hy_centrado,
-                self.historial_y,
-                self.hy_suavizado
-            )
-        )
-
-
-        # ====================================================
-        # CONGELACIÓN DESPUÉS DEL CLIC
-        # ====================================================
-
-        if (
-            current_time
-            <
-            self.cursor_bloqueado_hasta
-        ):
-
-            return "CLIC ✓"
-
-
-        # ====================================================
-        # MOVIMIENTO
-        # ====================================================
-
-        (
-            dx,
-            dy,
-            x_dir,
-            y_dir
-        ) = self.calcular_movimiento(
-            self.hx_suavizado,
-            self.hy_suavizado,
-            dt
-        )
-
-        mover_cursor(
-            dx,
-            dy
-        )
-
-
-        # ====================================================
-        # MENSAJE TEMPORAL
-        # ====================================================
-
-        if current_time < self.mensaje_hasta:
-
-            return self.mensaje_temporal
-
-
-        # ====================================================
-        # DIRECCIÓN
-        # ====================================================
-
-        direccion = (
-            f"{x_dir} {y_dir}"
-            .strip()
-        )
-
-        if direccion:
-
-            return direccion
-
-        return "CENTRO"
-
-
-    # ========================================================
-    # MOVIMIENTO DEL CURSOR
-    # ========================================================
-
-    def calcular_movimiento(
-        self,
-        hx,
-        hy,
-        dt
-    ):
-
-        # ====================================================
-        # UMBRALES X
-        # ====================================================
-
-        x_on = float(
-            config.get(
-                "cursor_deadzone_x_on",
-                0.16
-            )
-        )
-
-        x_off = float(
-            config.get(
-                "cursor_deadzone_x_off",
-                0.10
-            )
-        )
-
-
-        # ====================================================
-        # UMBRALES Y
-        # ====================================================
-
-        y_on = float(
-            config.get(
-                "cursor_deadzone_y_on",
-                0.12
-            )
-        )
-
-        y_off = float(
-            config.get(
-                "cursor_deadzone_y_off",
-                0.07
-            )
-        )
-
-
-        # ====================================================
-        # HISTÉRESIS
-        # ====================================================
-
-        self.estado_x = (
-            self.actualizar_estado_eje(
-                hx,
-                self.estado_x,
-                x_on,
-                x_off
-            )
-        )
-
-        self.estado_y = (
-            self.actualizar_estado_eje(
-                hy,
-                self.estado_y,
-                y_on,
-                y_off
-            )
-        )
-
-
-        # ====================================================
-        # VELOCIDADES
-        # ====================================================
-
-        velocidad_minima = float(
-            config.get(
-                "cursor_min_speed",
-                45.0
-            )
-        )
-
-        velocidad_maxima = float(
-            config.get(
-                "cursor_max_speed",
-                950.0
-            )
-        )
-
-        max_input = float(
-            config.get(
-                "cursor_max_input",
-                0.90
-            )
-        )
-
-        gamma = float(
-            config.get(
-                "cursor_curve_gamma",
-                1.75
-            )
-        )
-
+    def _direccion_absoluta(self, hx, hy):
+        """Solo para la etiqueta informativa de la interfaz (CABEZA: ...)."""
+        centro_x, centro_y = self.calibracion["centro"]
+        umbral_x = abs(self.calibracion["derecha"][0] - centro_x) * 0.15
+        umbral_y = abs(self.calibracion["abajo"][1] - centro_y) * 0.15
+        x_dir = y_dir = ""
+        if abs(hx - centro_x) > umbral_x:
+            x_dir = "DERECHA" if hx > centro_x else "IZQUIERDA"
+        if abs(hy - centro_y) > umbral_y:
+            y_dir = "ABAJO" if hy > centro_y else "ARRIBA"
+        return x_dir, y_dir
+
+    def _aplicar_iman_absoluto(self, x, y):
+        """
+        Igual que _aplicar_iman pero para el modo de posición: en vez de
+        frenar velocidad, acerca el punto de destino hacia el centro del
+        botón más cercano cuando el punto calculado ya cayó dentro de su radio.
+        """
+        self._iman_activo = False
+        if not self._objetivos:
+            return x, y
+
+        radio_iman = config.get("iman_radio", 90)
+        factor_min = config.get("iman_factor", 0.35)
+
+        for cx, cy, radio in self._objetivos:
+            radio_efectivo = radio + radio_iman
+            dist = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
+            if dist < radio_efectivo:
+                t = max(0.0, min(1.0, dist / radio_efectivo))
+                atraccion = (1 - factor_min) * (1 - t)  # más fuerte cerca del centro
+                self._iman_activo = True
+                return x + (cx - x) * atraccion, y + (cy - y) * atraccion
+
+        return x, y
+
+    # ==========================================================
+    # MODO POR VELOCIDAD (respaldo, se usa solo sin calibración)
+    # ==========================================================
+
+    def calcular_movimiento(self, hx, hy):
+        velocidad_base = config.get("mouse_speed", 5)
+        limite_multiplicador = 25.0  # Límite para poder cruzar una pantalla 2K
 
         dx = 0.0
         dy = 0.0
-
         x_dir = ""
         y_dir = ""
 
+        xt, yt = config["x_threshold"], config["y_threshold"]
 
-        # ====================================================
-        # CURVA DE VELOCIDAD
-        # ====================================================
+        # Eje X (giro de cuello). El multiplicador arranca en 0 justo al cruzar
+        # el umbral y crece cuadráticamente, en vez de saltar de golpe a
+        # velocidad_base: así el primer instante tras salir de la zona muerta
+        # es controlable y no un "brinco" del cursor.
+        if abs(hx) > xt:
+            exceso = (abs(hx) - xt) / xt
+            multiplicador = min(exceso ** 2, limite_multiplicador)
+            dx = velocidad_base * multiplicador * (1 if hx > 0 else -1)
+            x_dir = "DERECHA" if hx > 0 else "IZQUIERDA"
 
-        def obtener_velocidad(
-            valor,
-            deadzone
-        ):
+        # Eje Y (inclinación de cráneo), misma rampa suave.
+        if abs(hy) > yt:
+            exceso = (abs(hy) - yt) / yt
+            multiplicador = min(exceso ** 2, limite_multiplicador)
+            dy = velocidad_base * multiplicador * (1 if hy > 0 else -1)
+            y_dir = "ABAJO" if hy > 0 else "ARRIBA"
 
-            magnitud = abs(
-                valor
-            )
+        dx, dy = self._aplicar_iman(dx, dy)
 
-            exceso = max(
-                0.0,
-                magnitud
-                -
-                deadzone
-            )
+        return dx, dy, x_dir, y_dir
 
-            rango = max(
-                max_input
-                -
-                deadzone,
-                1e-6
-            )
+    def _aplicar_iman(self, dx, dy):
+        """
+        Frena el cursor cuando se acerca a un botón registrado, para que
+        acertar un tile no dependa de apuntar con precisión milimétrica con
+        la cabeza. No cambia la dirección, solo amortigua la velocidad.
+        """
+        self._iman_activo = False
+        if not self._objetivos or (dx == 0.0 and dy == 0.0):
+            return dx, dy
 
-            normalizado = min(
-                exceso
-                /
-                rango,
-                1.0
-            )
+        radio_iman = config.get("iman_radio", 90)
+        factor_min = config.get("iman_factor", 0.35)
 
-            curva = (
-                normalizado
-                **
-                gamma
-            )
+        try:
+            x, y = posicion_cursor()
+        except Exception:
+            return dx, dy
 
-            return (
-                velocidad_minima
-                +
-                (
-                    velocidad_maxima
-                    -
-                    velocidad_minima
-                )
-                *
-                curva
-            )
+        nx, ny = x + dx, y + dy
+        for cx, cy, radio in self._objetivos:
+            radio_efectivo = radio + radio_iman
+            dist = ((nx - cx) ** 2 + (ny - cy) ** 2) ** 0.5
+            if dist < radio_efectivo:
+                t = max(0.0, min(1.0, dist / radio_efectivo))
+                amortiguacion = factor_min + (1 - factor_min) * t
+                self._iman_activo = True
+                return dx * amortiguacion, dy * amortiguacion
 
-
-        # ====================================================
-        # X
-        # ====================================================
-
-        if self.estado_x != 0:
-
-            velocidad_x = obtener_velocidad(
-                hx,
-                x_off
-            )
-
-            dx = (
-                self.estado_x
-                *
-                velocidad_x
-                *
-                dt
-            )
-
-            if self.estado_x < 0:
-
-                x_dir = "IZQUIERDA"
-
-            else:
-
-                x_dir = "DERECHA"
-
-
-        # ====================================================
-        # Y
-        # ====================================================
-
-        if self.estado_y != 0:
-
-            velocidad_y = obtener_velocidad(
-                hy,
-                y_off
-            )
-
-            dy = (
-                self.estado_y
-                *
-                velocidad_y
-                *
-                dt
-            )
-
-            if self.estado_y < 0:
-
-                y_dir = "ARRIBA"
-
-            else:
-
-                y_dir = "ABAJO"
-
-
-        return (
-            dx,
-            dy,
-            x_dir,
-            y_dir
-        )
+        return dx, dy

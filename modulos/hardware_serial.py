@@ -1,75 +1,54 @@
-from movement import ControladorArduino
+import json
+import time
+import serial
 
+with open('config.json', 'r') as f:
+    config = json.load(f)
 
-# ============================================================
-# CONTROL DE LA SILLA
-# ============================================================
 
 class DomoticaController:
+    """
+    Habla con la tarjeta propia de la silla Airwheel (conectada directo en
+    el puerto serial, sin Arduino intermedio). Esa tarjeta espera 2 bytes
+    por actualización: (duty_vertical, duty_horizontal), 0-255, con 128 =
+    neutral/detenido — protocolo confirmado por movement.py.
 
-    def __init__(self):
+    (Sillodromo_MCU.ino, en la raíz del repo, es para un Arduino propio
+    manejando un puente H con motores aparte; no aplica a este puerto
+    mientras la Airwheel esté conectada directo.)
+    """
 
-        self.silla = ControladorArduino()
+    NEUTRO = int(config.get("airwheel_neutro", 128))
+    DELTA = int(config.get("airwheel_delta", 120))
 
+    def __init__(self, puerto='COM5', baudrate=9600):
+        try:
+            self.arduino = serial.Serial(puerto, baudrate, timeout=1)
+            time.sleep(2)
+        except serial.SerialException:
+            self.arduino = None
+            print("Advertencia: Entorno domótico no conectado.")
 
-    # ========================================================
-    # MOVIMIENTO
-    # ========================================================
+    def _enviar_duty(self, vertical, horizontal):
+        vertical = max(0, min(255, int(vertical)))
+        horizontal = max(0, min(255, int(horizontal)))
+        if self.arduino:
+            self.arduino.write(bytes([vertical, horizontal]))
+            print(f"Comando enviado: V={vertical} H={horizontal}")
+        else:
+            print(f"[Simulación Serial] V={vertical} H={horizontal}")
 
     def avanzar(self):
+        self._enviar_duty(self.NEUTRO + self.DELTA, self.NEUTRO)
 
-        print(
-            "[DOMOTICA] Avanzar"
-        )
-
-        return self.silla.avanzar()
-
-
-    def retroceder(self):
-
-        print(
-            "[DOMOTICA] Retroceder"
-        )
-
-        return self.silla.retroceder()
-
+    def regresar(self):
+        self._enviar_duty(self.NEUTRO - self.DELTA, self.NEUTRO)
 
     def girar_izquierda(self):
-
-        print(
-            "[DOMOTICA] Girar izquierda"
-        )
-
-        return self.silla.girar_izquierda()
-
+        self._enviar_duty(self.NEUTRO, self.NEUTRO + self.DELTA)
 
     def girar_derecha(self):
-
-        print(
-            "[DOMOTICA] Girar derecha"
-        )
-
-        return self.silla.girar_derecha()
-
+        self._enviar_duty(self.NEUTRO, self.NEUTRO - self.DELTA)
 
     def detener(self):
-
-        print(
-            "[DOMOTICA] Detener"
-        )
-
-        return self.silla.detener()
-
-
-    # ========================================================
-    # CERRAR
-    # ========================================================
-
-    def cerrar_conexion(self):
-
-        if hasattr(
-            self,
-            "silla"
-        ):
-
-            self.silla.cerrar_conexion()
+        self._enviar_duty(self.NEUTRO, self.NEUTRO)
