@@ -5,3 +5,6 @@ mediapipe==0.10.14
 ultralytics
 pyttsx3
 pyserial
+pyautogui
+edge-tts
+pygame

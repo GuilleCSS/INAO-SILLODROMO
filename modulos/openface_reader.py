@@ -29,6 +29,13 @@ def stream_openface_csv(csv_path):
         y_51_idx = header.index("y_51")
         y_57_idx = header.index("y_57")
 
+        # 68 puntos faciales 2D (para dibujar la malla en la interfaz)
+        if "x_0" in header and "y_67" in header:
+            lm_x = [header.index(f"x_{i}") for i in range(68)]
+            lm_y = [header.index(f"y_{i}") for i in range(68)]
+        else:
+            lm_x = lm_y = []
+
         while True:
             line = f.readline()
             if not line:
@@ -46,8 +53,9 @@ def stream_openface_csv(csv_path):
                 au45 = float(parts[au45_idx]) if au45_idx is not None else 0.0
                 y_51 = float(parts[y_51_idx])
                 y_57 = float(parts[y_57_idx])
-                
-                yield hx, hy, au45, conf, y_51, y_57
+                puntos = [(float(parts[ix]), float(parts[iy])) for ix, iy in zip(lm_x, lm_y)]
+
+                yield hx, hy, au45, conf, y_51, y_57, puntos
             except ValueError:
                 continue
 

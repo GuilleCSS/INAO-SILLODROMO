@@ -3,7 +3,7 @@ import serial
 from pynput import keyboard
 
 # --- Constantes de configuración ---
-PUERTO_SERIAL = 'COM4'
+PUERTO_SERIAL = 'COM5'
 BAUD_RATE = 9600
 POSICION_NEUTRA = 128
 VALOR_MAXIMO = 255
@@ -46,10 +46,10 @@ class ControladorArduino:
         if 's' in self.teclas_presionadas:
             mov_vertical -= 1
         if 'a' in self.teclas_presionadas:
-            # En muchos sistemas, 'a' es izquierda (menor valor) y 'd' derecha (mayor valor)
-            mov_horizontal -= 1
-        if 'd' in self.teclas_presionadas:
+            # Invertido: en esta silla, mayor valor = izquierda, menor valor = derecha
             mov_horizontal += 1
+        if 'd' in self.teclas_presionadas:
+            mov_horizontal -= 1
             
         # Actualizar valores de duty. Si no hay teclas, vuelven a la posición neutra.
         self.ver_duty = POSICION_NEUTRA + mov_vertical * PASO_MOVIMIENTO * 8 # Mayor rango de movimiento vertical

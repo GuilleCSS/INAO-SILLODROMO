@@ -1,19 +1,26 @@
+import os
 import sys
 import json
+import time
+from collections import deque
 
-from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton
-from PyQt5.QtCore import QThread, pyqtSignal
+# Trabajar siempre desde la carpeta del proyecto (config.json, interfaz.ui, modulos/)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(BASE_DIR)
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
 from PyQt5 import uic
+from PyQt5.QtWidgets import QApplication, QMainWindow, QShortcut
+from PyQt5.QtCore import Qt, QThread, QTimer, QTime, pyqtSignal
+from PyQt5.QtGui import QKeySequence
 
-from modulos.openface_reader import (
-    lanzar_openface,
-    find_generated_csv,
-    stream_openface_csv
-)
-
-from modulos.gaze_controller import GazeStateController
+from modulos.openface_reader import lanzar_openface, find_generated_csv, stream_openface_csv
+from modulos.gaze_controller import GazeStateController, actualizar_centro
 from modulos.hardware_serial import DomoticaController
 from modulos.voice_synth import hablar_en_segundo_plano
+from modulos.camara import HiloCamara
+from modulos.calibracion_ui import DialogoCalibracion
 
 
 # ============================================================
@@ -23,6 +30,29 @@ from modulos.voice_synth import hablar_en_segundo_plano
 with open("config.json", "r") as f:
     config = json.load(f)
 
+RUTA_UI = os.path.join(BASE_DIR, "interfaz.ui")
+
+# (texto en pantalla, nombre que se le dice a Alexa)
+DISPOSITIVOS = [
+    ("Enchufe 2", "enchufe dos"),
+    ("Enchufe 3", "enchufe tres"),
+    ("Secadora 1", "secadora uno"),
+    ("Ventilador 2", "ventilador dos"),
+    ("Alexa 2", "Alexa dos"),
+    ("Cafetera 2", "cafetera dos"),
+]
+
+# movimiento -> (texto, método de DomoticaController)
+MOVIMIENTOS = {
+    "avanzar": ("Avanzando", "avanzar"),
+    "regresar": ("Retrocediendo", "regresar"),
+    "izquierda": ("Girando a la izquierda", "girar_izquierda"),
+    "derecha": ("Girando a la derecha", "girar_derecha"),
+}
+
+# Si la cámara deja de mandar datos este tiempo con la silla en marcha, se detiene
+TIEMPO_SIN_SENAL = 0.8
+
 
 # ============================================================
 # HILO DE OPENFACE
@@ -30,47 +60,42 @@ with open("config.json", "r") as f:
 
 class HiloProcesamiento(QThread):
 
-    senal_actualizacion = pyqtSignal(str)
+    senal_mensaje = pyqtSignal(str)
+    senal_listo = pyqtSignal()
+    senal_estado = pyqtSignal(dict)
+
+    def __init__(self):
+        super().__init__()
+        self.controller = None
+        self.proceso_of = None
+        self._activo = True
 
     def run(self):
+        try:
+            self.senal_mensaje.emit("Inicializando cámara y modelos de OpenFace…")
+            self.proceso_of = lanzar_openface()
+            csv_file = find_generated_csv(config["output_dir"])
+            self.controller = GazeStateController()
+            self.senal_listo.emit()
+            self.senal_mensaje.emit("Sistema activo · leyendo bioseñales")
 
-        self.proceso_of = lanzar_openface()
+            for datos in stream_openface_csv(csv_file):
+                if not self._activo:
+                    break
+                estado = self.controller.process_frame(*datos)
+                if estado:
+                    self.senal_estado.emit(estado)
+        except Exception as e:
+            self.senal_mensaje.emit(f"Error en visión: {e}")
 
-        self.senal_actualizacion.emit(
-            "Inicializando cámara y modelos de OpenFace..."
-        )
-
-        csv_file = find_generated_csv(
-            config["output_dir"]
-        )
-
-        controller = GazeStateController()
-
-        self.senal_actualizacion.emit(
-            "¡Sistema Activo! Leyendo bioseñales..."
-        )
-
-        for hx, hy, au45, conf, y_51, y_57 in stream_openface_csv(csv_file):
-
-            estado_mirada = controller.process_frame(
-                hx,
-                hy,
-                au45,
-                conf,
-                y_51,
-                y_57
-            )
-
-            if estado_mirada:
-
-                self.senal_actualizacion.emit(
-                    f"Estado: {estado_mirada}"
-                )
-
+    def soltar_clic(self):
+        if self.controller:
+            self.controller.soltar()
 
     def detener(self):
-
-        if hasattr(self, "proceso_of"):
+        self._activo = False
+        self.soltar_clic()
+        if self.proceso_of:
             self.proceso_of.terminate()
 
 
@@ -81,665 +106,298 @@ class HiloProcesamiento(QThread):
 class ControlCentral(QMainWindow):
 
     def __init__(self):
-
         super().__init__()
+        uic.loadUi(RUTA_UI, self)
 
-        uic.loadUi(
-            "interfaz.ui",
-            self
+        self.domotica = DomoticaController(
+            puerto=config.get("serial_port", "COM5"),
+            baudrate=config.get("serial_baudrate", 9600),
         )
-
-
-        # ====================================================
-        # BOTONES ORIGINALES DE MOVIMIENTO
-        # ====================================================
-
-        botones = []
-
-        if hasattr(self, "btn_avanzar"):
-            botones.append(self.btn_avanzar)
-
-        if hasattr(self, "btn_girar_izq"):
-            botones.append(self.btn_girar_izq)
-
-        if hasattr(self, "btn_girar_der"):
-            botones.append(self.btn_girar_der)
-
-        if hasattr(self, "btn_detener"):
-            botones.append(self.btn_detener)
-
-
-        # Eliminar botón antiguo de luz
-        if hasattr(self, "btn_luz"):
-
-            self.btn_luz.hide()
-            self.btn_luz.deleteLater()
-
-
-        for btn in botones:
-
-            btn.setMinimumSize(0, 0)
-
-            btn.setMaximumSize(
-                16777215,
-                16777215
-            )
-
-            btn.setParent(
-                self.centralwidget
-            )
-
-
-        # ====================================================
-        # CONTROL DEL HARDWARE
-        # ====================================================
-
-        self.domotica = DomoticaController()
-
-
-        # ====================================================
-        # BOTONES DE MOVIMIENTO
-        # ====================================================
-
-        if hasattr(self, "btn_avanzar"):
-
-            self.btn_avanzar.clicked.connect(
-                self.ejecutar_avanzar
-            )
-
-
-        if hasattr(self, "btn_detener"):
-
-            self.btn_detener.clicked.connect(
-                self.ejecutar_detener
-            )
-
-
-        if hasattr(self, "btn_girar_izq"):
-
-            self.btn_girar_izq.clicked.connect(
-                self.ejecutar_girar_izq
-            )
-
-
-        if hasattr(self, "btn_girar_der"):
-
-            self.btn_girar_der.clicked.connect(
-                self.ejecutar_girar_der
-            )
-
-
-        # ====================================================
-        # DISPOSITIVOS DE ALEXA
-        # ====================================================
-
-        self.dispositivos_alexa = [
-
-            ("Enchufe 2", "enchufe dos"),
-
-            ("Enchufe 3", "enchufe tres"),
-
-            ("Secadora 1", "secadora uno"),
-
-            ("Ventilador 2", "ventilador dos"),
-
-            ("Alexa 2", "Alexa dos"),
-
-            ("Cafetera 2", "cafetera dos")
-
-        ]
-
-
-        # ====================================================
-        # GUARDAMOS LOS PARES DE BOTONES
-        # ====================================================
-
-        self.botones_alexa = []
-
-
-        # ====================================================
-        # CREACIÓN DE LOS 12 BOTONES
-        # ====================================================
-
-        for nombre_visual, nombre_voz in self.dispositivos_alexa:
-
-            # ------------------------------------------------
-            # BOTÓN ENCENDER
-            # ------------------------------------------------
-
-            btn_encender = QPushButton(
-                f"ENCENDER\n{nombre_visual}",
-                self.centralwidget
-            )
-
-            self.estilo_boton_encender(
-                btn_encender
-            )
-
-
-            # ------------------------------------------------
-            # BOTÓN APAGAR
-            # ------------------------------------------------
-
-            btn_apagar = QPushButton(
-                f"APAGAR\n{nombre_visual}",
-                self.centralwidget
-            )
-
-            self.estilo_boton_apagar(
-                btn_apagar
-            )
-
-
-            # ------------------------------------------------
-            # CONECTAR ENCENDER
-            # ------------------------------------------------
-
-            btn_encender.clicked.connect(
-
-                lambda checked,
-                n=nombre_visual,
-                voz=nombre_voz:
-
-                self.encender_dispositivo(
-                    n,
-                    voz
-                )
-            )
-
-
-            # ------------------------------------------------
-            # CONECTAR APAGAR
-            # ------------------------------------------------
-
-            btn_apagar.clicked.connect(
-
-                lambda checked,
-                n=nombre_visual,
-                voz=nombre_voz:
-
-                self.apagar_dispositivo(
-                    n,
-                    voz
-                )
-            )
-
-
-            # Guardamos ambos botones
-            self.botones_alexa.append(
-                (
-                    btn_encender,
-                    btn_apagar
-                )
-            )
-
-
-        # ====================================================
-        # OPENFACE
-        # ====================================================
-
+        self.movimiento_actual = None
+        self._ultimo_frame = None
+        self.hilo_camara = None
+        self._ultimo_hx = 0.0
+        self._ultimo_hy = 0.0
+        self._historial_hxhy = deque(maxlen=45)  # ~1.5 s, para el recentrado rápido
+        self._dialogo_calibracion = None
+
+        self._configurar_movimiento()
+        self._configurar_domotica()
+        self._configurar_calibracion()
+        self._configurar_estado_inicial()
+
+        # ---------- Visión ----------
         self.hilo = HiloProcesamiento()
-
-        self.hilo.senal_actualizacion.connect(
-            self.actualizar_label
-        )
-
+        self.hilo.senal_mensaje.connect(self.mostrar_mensaje)
+        self.hilo.senal_listo.connect(self._iniciar_camara)
+        self.hilo.senal_listo.connect(self._recalcular_objetivos_iman)
+        self.hilo.senal_listo.connect(self.abrir_calibracion)
+        self.hilo.senal_estado.connect(self.actualizar_estado)
         self.hilo.start()
 
+        # ---------- Temporizadores ----------
+        self.timer_reloj = QTimer(self)
+        self.timer_reloj.timeout.connect(self._tick_reloj)
+        self.timer_reloj.start(1000)
+        self._tick_reloj()
 
-    # ========================================================
-    # ESTILO ENCENDER
-    # ========================================================
+        self.timer_seguridad = QTimer(self)
+        self.timer_seguridad.timeout.connect(self._vigilancia)
+        self.timer_seguridad.start(200)
 
-    def estilo_boton_encender(self, boton):
+        # ---------- Atajos (para quien acompaña al usuario) ----------
+        QShortcut(QKeySequence(Qt.Key_Escape), self, activated=self.close)
+        QShortcut(QKeySequence(Qt.Key_Space), self, activated=self.detener_movimiento)
+        QShortcut(QKeySequence("Ctrl+K"), self, activated=self.abrir_calibracion)
+        QShortcut(QKeySequence("Ctrl+R"), self, activated=self.recentrar_cursor)
 
-        boton.setStyleSheet("""
-            QPushButton {
+    # --------------------------------------------------------
+    # CONFIGURACIÓN DE LA INTERFAZ
+    # --------------------------------------------------------
 
-                background-color: #1F4E79;
+    def _configurar_calibracion(self):
+        self.btnCalibrar.clicked.connect(self.abrir_calibracion)
 
-                color: white;
+    def abrir_calibracion(self):
+        self.detener_movimiento()
+        dialogo = DialogoCalibracion(self)
+        self._dialogo_calibracion = dialogo
+        dialogo.actualizar_lectura(self._ultimo_hx, self._ultimo_hy)
+        dialogo.exec_()
+        self._dialogo_calibracion = None
 
-                border: 2px solid #163A5C;
+        if dialogo.guardado:
+            if self.hilo.controller:
+                self.hilo.controller.recargar_calibracion()
+            self.mostrar_mensaje("Calibración guardada: el cursor ahora apunta directo a la pantalla")
+            hablar_en_segundo_plano("Calibración completada")
 
-                font-size: 24px;
+    def recentrar_cursor(self):
+        """Recalibra solo el 'centro' con la postura actual (promedio de ~1.5 s),
+        sin repetir los 4 extremos. Corrige que el cursor se quede pegado en un
+        borde cuando la postura neutral se corrió durante la sesión."""
+        if len(self._historial_hxhy) < 10:
+            self.mostrar_mensaje("Recentrar: espera un momento con la cara detectada e inténtalo de nuevo")
+            return
+        hx = sum(p[0] for p in self._historial_hxhy) / len(self._historial_hxhy)
+        hy = sum(p[1] for p in self._historial_hxhy) / len(self._historial_hxhy)
+        if actualizar_centro(hx, hy):
+            if self.hilo.controller:
+                self.hilo.controller.recargar_calibracion()
+            self.mostrar_mensaje("Centro del cursor recalibrado")
+            hablar_en_segundo_plano("Centro actualizado")
+        else:
+            self.mostrar_mensaje("Recentrar: primero completa la calibración con Ctrl+K")
 
-                font-weight: bold;
+    def _configurar_movimiento(self):
+        self.botones_movimiento = {
+            "izquierda": self.btn_girar_izq,
+            "avanzar": self.btn_avanzar,
+            "derecha": self.btn_girar_der,
+            "regresar": self.btn_regresar,
+        }
+        for mov, btn in self.botones_movimiento.items():
+            # La silla se mueve mientras el clic esté presionado y se detiene al soltarlo
+            btn.pressed.connect(lambda m=mov: self.iniciar_movimiento(m))
+            btn.released.connect(self.detener_movimiento)
+
+    def _configurar_domotica(self):
+        self.tarjetas = []
+        for i, (visual, voz) in enumerate(DISPOSITIVOS, start=1):
+            tarjeta = {
+                "nombre": visual,
+                "frame": getattr(self, f"tarjeta_{i}"),
+                "estado": getattr(self, f"lbl_estado_{i}"),
             }
+            getattr(self, f"lbl_disp_{i}").setText(visual)
+            getattr(self, f"btn_on_{i}").clicked.connect(
+                lambda _=False, t=tarjeta, v=voz: self.encender_dispositivo(t, v))
+            getattr(self, f"btn_off_{i}").clicked.connect(
+                lambda _=False, t=tarjeta, v=voz: self.apagar_dispositivo(t, v))
+            self.tarjetas.append(tarjeta)
 
-            QPushButton:hover {
-
-                background-color: #2E75B6;
-            }
-
-            QPushButton:pressed {
-
-                background-color: #163A5C;
-            }
-        """)
-
-
-    # ========================================================
-    # ESTILO APAGAR
-    # ========================================================
-
-    def estilo_boton_apagar(self, boton):
-
-        boton.setStyleSheet("""
-            QPushButton {
-
-                background-color: #E4E3A9;
-
-                color: #0B1F3A;
-
-                border: 2px solid #0B1F3A;
-
-                font-size: 24px;
-
-                font-weight: bold;
-            }
-
-            QPushButton:hover {
-
-                background-color: #F5F1E6;
-            }
-
-            QPushButton:pressed {
-
-                background-color: #D1CF87;
-            }
-        """)
-
-
-    # ========================================================
-    # MOVIMIENTO DE SILLA
-    # ========================================================
-
-    def ejecutar_avanzar(self):
-
-        self.domotica.avanzar()
-
-        hablar_en_segundo_plano(
-            "Avanzando"
+    def _configurar_estado_inicial(self):
+        puerto = config.get("serial_port", "COM5")
+        conectado = getattr(self.domotica, "arduino", None) is not None
+        if conectado:
+            self._chip(self.chipSilla, "Silla detenida", "idle")
+            self.mostrar_mensaje(f"Silla conectada en {puerto}")
+        else:
+            self._chip(self.chipSilla, "Silla: simulación", "warn")
+            self.mostrar_mensaje(f"Silla en simulación: no se pudo abrir {puerto}")
+        self._chip(self.chipSistema, "Iniciando…", "warn")
+        self.lblAyuda.setText(
+            "Cabeza: mover cursor   ·   Boca abierta: clic sostenido   ·   "
+            f"Ojos cerrados {config.get('blink_hold_time', 3.5):g} s: pausar   ·   "
+            "Punto verde en CABEZA: imán activo cerca de un botón   ·   "
+            "La calibración corre sola al iniciar   ·   "
+            "Botón Calibrar (o Ctrl+K): repetirla si hace falta   ·   "
+            "Ctrl+R: recentrar si el cursor se queda pegado en un borde"
         )
 
-        self.actualizar_label(
-            "Silla: Avanzando"
-        )
+    # --------------------------------------------------------
+    # IMÁN DE PRECISIÓN (asiste al cursor cerca de los botones)
+    # --------------------------------------------------------
 
+    def _recalcular_objetivos_iman(self):
+        """Informa a GazeStateController dónde están los botones en pantalla
+        para que el cursor se frene al acercarse (más fácil de acertar)."""
+        hilo = getattr(self, "hilo", None)
+        if not hilo or not hilo.controller:
+            return
+        botones = list(self.botones_movimiento.values())
+        for i in range(1, len(DISPOSITIVOS) + 1):
+            botones.append(getattr(self, f"btn_on_{i}"))
+            botones.append(getattr(self, f"btn_off_{i}"))
 
-    def ejecutar_detener(self):
-
-        self.domotica.detener()
-
-        hablar_en_segundo_plano(
-            "Silla detenida"
-        )
-
-        self.actualizar_label(
-            "Silla: Detenida"
-        )
-
-
-    def ejecutar_girar_izq(self):
-
-        self.domotica.girar_izquierda()
-
-        hablar_en_segundo_plano(
-            "Girando a la izquierda"
-        )
-
-        self.actualizar_label(
-            "Silla: Girando a la izquierda"
-        )
-
-
-    def ejecutar_girar_der(self):
-
-        self.domotica.girar_derecha()
-
-        hablar_en_segundo_plano(
-            "Girando a la derecha"
-        )
-
-        self.actualizar_label(
-            "Silla: Girando a la derecha"
-        )
-
-
-    # ========================================================
-    # ENCENDER DISPOSITIVO
-    # ========================================================
-
-    def encender_dispositivo(
-        self,
-        nombre_visual,
-        nombre_voz
-    ):
-
-        comando = (
-            f"Alexa, enciende {nombre_voz}"
-        )
-
-        hablar_en_segundo_plano(
-            comando
-        )
-
-        if hasattr(
-            self,
-            "label_estado"
-        ):
-
-            self.label_estado.setText(
-                f"Encendiendo: {nombre_visual}"
-            )
-
-
-    # ========================================================
-    # APAGAR DISPOSITIVO
-    # ========================================================
-
-    def apagar_dispositivo(
-        self,
-        nombre_visual,
-        nombre_voz
-    ):
-
-        comando = (
-            f"Alexa, apaga {nombre_voz}"
-        )
-
-        hablar_en_segundo_plano(
-            comando
-        )
-
-        if hasattr(
-            self,
-            "label_estado"
-        ):
-
-            self.label_estado.setText(
-                f"Apagando: {nombre_visual}"
-            )
-
-
-    # ========================================================
-    # REDIMENSIONAMIENTO
-    # ========================================================
+        objetivos = []
+        for btn in botones:
+            rect = btn.rect()
+            if rect.width() <= 0 or rect.height() <= 0:
+                continue
+            centro = btn.mapToGlobal(rect.center())
+            radio = min(rect.width(), rect.height()) / 2
+            objetivos.append((centro.x(), centro.y(), radio))
+        hilo.controller.set_objetivos(objetivos)
 
     def resizeEvent(self, event):
-
         super().resizeEvent(event)
+        # Los botones cambian de posición al reacomodarse el layout.
+        QTimer.singleShot(50, self._recalcular_objetivos_iman)
 
-        w = self.width()
-        h = self.height()
+    # --------------------------------------------------------
+    # ESTILOS DINÁMICOS (propiedades usadas por el QSS del .ui)
+    # --------------------------------------------------------
 
-        if w == 0 or h == 0:
+    @staticmethod
+    def _repulir(widget):
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
+
+    def _chip(self, chip, texto, estado):
+        chip.setText(f"●  {texto}")
+        if chip.property("estado") != estado:
+            chip.setProperty("estado", estado)
+            self._repulir(chip)
+
+    def _marcar_tarjeta(self, tarjeta, encendido):
+        tarjeta["frame"].setProperty("encendido", encendido)
+        tarjeta["estado"].setProperty("estado", "on" if encendido else "off")
+        tarjeta["estado"].setText("ENCENDIDO" if encendido else "APAGADO")
+        self._repulir(tarjeta["frame"])
+        self._repulir(tarjeta["estado"])
+
+    # --------------------------------------------------------
+    # CÁMARA
+    # --------------------------------------------------------
+
+    def _iniciar_camara(self):
+        if not config.get("vista_camara", True):
+            self._sin_video("Vista de cámara desactivada")
             return
-
-
-        # ====================================================
-        # DIVIDIR PANTALLA
-        # ====================================================
-
-        h_tercio = h // 3
-
-
-        # ====================================================
-        # AVANZAR
-        # ====================================================
-
-        if hasattr(
-            self,
-            "btn_avanzar"
-        ):
-
-            self.btn_avanzar.setGeometry(
-                0,
-                0,
-                w,
-                h_tercio
-            )
-
-
-        # ====================================================
-        # GIRAR IZQUIERDA
-        # ====================================================
-
-        if hasattr(
-            self,
-            "btn_girar_izq"
-        ):
-
-            self.btn_girar_izq.setGeometry(
-                0,
-                h_tercio,
-                w // 2,
-                h_tercio
-            )
-
-
-        # ====================================================
-        # GIRAR DERECHA
-        # ====================================================
-
-        if hasattr(
-            self,
-            "btn_girar_der"
-        ):
-
-            self.btn_girar_der.setGeometry(
-                w // 2,
-                h_tercio,
-                w - (w // 2),
-                h_tercio
-            )
-
-
-        # ====================================================
-        # DETENER
-        # ====================================================
-
-        if hasattr(
-            self,
-            "btn_detener"
-        ):
-
-            size = int(
-                min(w, h) * 0.45
-            )
-
-            self.btn_detener.setGeometry(
-                (w - size) // 2,
-                (h - size) // 2,
-                size,
-                size
-            )
-
-
-            self.btn_detener.setStyleSheet(
-                f"""
-                QPushButton {{
-
-                    background-color: #E63946;
-
-                    color: white;
-
-                    border-radius:
-                    {size // 2}px;
-
-                    border:
-                    4px solid #900C3F;
-
-                    font-size:
-                    26px;
-
-                    font-weight:
-                    bold;
-                }}
-
-                QPushButton:hover {{
-
-                    background-color:
-                    #FF4D4D;
-                }}
-                """
-            )
-
-            self.btn_detener.raise_()
-
-
-        # ====================================================
-        # PANEL DE DOMÓTICA
-        # ====================================================
-
-        y_base = h_tercio * 2
-
-        alto_panel = h - y_base
-
-
-        # 3 dispositivos por fila
-        columnas = 3
-
-        filas = 2
-
-
-        # Tamaño disponible para cada dispositivo
-        ancho_dispositivo = w // columnas
-
-        alto_dispositivo = alto_panel // filas
-
-
-        # ====================================================
-        # POSICIONAR LOS 6 DISPOSITIVOS
-        # ====================================================
-
-        for i, (
-            btn_encender,
-            btn_apagar
-        ) in enumerate(
-            self.botones_alexa
-        ):
-
-            # -----------------------------------------------
-            # Calcular fila y columna
-            # -----------------------------------------------
-
-            fila = i // columnas
-
-            columna = i % columnas
-
-
-            # -----------------------------------------------
-            # Posición del dispositivo
-            # -----------------------------------------------
-
-            x = columna * ancho_dispositivo
-
-            y = (
-                y_base
-                +
-                fila * alto_dispositivo
-            )
-
-
-            # -----------------------------------------------
-            # Ajustar última columna
-            # -----------------------------------------------
-
-            if columna == columnas - 1:
-
-                ancho_actual = (
-                    w - x
-                )
-
-            else:
-
-                ancho_actual = (
-                    ancho_dispositivo
-                )
-
-
-            # -----------------------------------------------
-            # Cada dispositivo se divide en dos
-            # -----------------------------------------------
-
-            mitad = (
-                ancho_actual // 2
-            )
-
-
-            # ===============================================
-            # BOTÓN ENCENDER
-            # ===============================================
-
-            btn_encender.setGeometry(
-                x,
-                y,
-                mitad,
-                alto_dispositivo
-            )
-
-
-            # ===============================================
-            # BOTÓN APAGAR
-            # ===============================================
-
-            btn_apagar.setGeometry(
-                x + mitad,
-                y,
-                ancho_actual - mitad,
-                alto_dispositivo
-            )
-
-
-            btn_encender.raise_()
-
-            btn_apagar.raise_()
-
-
-        # ====================================================
-        # LABEL ESTADO
-        # ====================================================
-
-        if hasattr(
-            self,
-            "label_estado"
-        ):
-
-            self.label_estado.raise_()
-
-
-    # ========================================================
-    # LABEL
-    # ========================================================
-
-    def actualizar_label(
-        self,
-        texto
-    ):
-
-        if hasattr(
-            self,
-            "label_estado"
-        ):
-
-            self.label_estado.setText(
-                texto
-            )
-
-
-    # ========================================================
+        self.lblInfoCamara.setText("Conectando vista…")
+        self.hilo_camara = HiloCamara()
+        self.hilo_camara.senal_frame.connect(self._frame_camara)
+        self.hilo_camara.senal_no_disponible.connect(self._sin_video)
+        self.hilo_camara.start()
+
+    def _frame_camara(self, imagen):
+        if self.vistaCamara.modo != "vivo":
+            self.lblInfoCamara.setText("Cámara en vivo")
+        self.vistaCamara.set_frame(imagen)
+
+    def _sin_video(self, motivo):
+        self.vistaCamara.set_sin_video()
+        self.lblInfoCamara.setText(f"{motivo} · mostrando rastreo")
+
+    # --------------------------------------------------------
+    # MOVIMIENTO (mantener presionado)
+    # --------------------------------------------------------
+
+    def iniciar_movimiento(self, mov):
+        texto, metodo = MOVIMIENTOS[mov]
+        getattr(self.domotica, metodo)()
+        self.movimiento_actual = mov
+        hablar_en_segundo_plano(texto)
+        self._chip(self.chipSilla, texto, "move")
+        self.mostrar_mensaje(f"Silla: {texto}")
+
+    def detener_movimiento(self, motivo=None):
+        if self.movimiento_actual is None:
+            return
+        self.domotica.detener()
+        self.movimiento_actual = None
+        self._chip(self.chipSilla, "Silla detenida", "idle")
+        self.mostrar_mensaje(motivo or "Silla detenida")
+
+    def _vigilancia(self):
+        """Si la visión deja de mandar datos con la silla en marcha, se detiene."""
+        if self.movimiento_actual is None or self._ultimo_frame is None:
+            return
+        if time.time() - self._ultimo_frame > TIEMPO_SIN_SENAL:
+            self.hilo.soltar_clic()
+            for btn in self.botones_movimiento.values():
+                btn.setDown(False)
+            self.detener_movimiento("Seguridad: se perdió la señal de la cámara · silla detenida")
+
+    # --------------------------------------------------------
+    # DOMÓTICA
+    # --------------------------------------------------------
+
+    def encender_dispositivo(self, tarjeta, nombre_voz):
+        hablar_en_segundo_plano(f"Alexa, enciende {nombre_voz}")
+        self._marcar_tarjeta(tarjeta, True)
+        self.mostrar_mensaje(f"Encendiendo: {tarjeta['nombre']}")
+
+    def apagar_dispositivo(self, tarjeta, nombre_voz):
+        hablar_en_segundo_plano(f"Alexa, apaga {nombre_voz}")
+        self._marcar_tarjeta(tarjeta, False)
+        self.mostrar_mensaje(f"Apagando: {tarjeta['nombre']}")
+
+    # --------------------------------------------------------
+    # ESTADO
+    # --------------------------------------------------------
+
+    def mostrar_mensaje(self, texto):
+        self.label_estado.setText(texto)
+
+    def actualizar_estado(self, e):
+        self._ultimo_frame = time.time()
+        self._ultimo_hx, self._ultimo_hy = e["hx"], e["hy"]
+        self._historial_hxhy.append((e["hx"], e["hy"]))
+        if self._dialogo_calibracion is not None:
+            self._dialogo_calibracion.actualizar_lectura(e["hx"], e["hy"])
+        activo = e["rostro"] and e["sistema"]
+
+        if not e["rostro"]:
+            self._chip(self.chipSistema, "Rostro no detectado", "error")
+        elif not e["sistema"]:
+            self._chip(self.chipSistema, "Pausado", "warn")
+        else:
+            self._chip(self.chipSistema, "Sistema activo", "ok")
+
+        self.vistaCamara.set_estado(e)
+        self.indCabeza.actualizar(e["hx"], e["hy"], activo, e.get("iman", False))
+        self.indBoca.actualizar(e["apertura"], e["clic"])
+        self.lblDireccion.setText(e["direccion"] if activo else "—")
+
+    def _tick_reloj(self):
+        self.lblReloj.setText(QTime.currentTime().toString("HH:mm"))
+
+    # --------------------------------------------------------
     # CERRAR
-    # ========================================================
+    # --------------------------------------------------------
 
-    def closeEvent(
-        self,
-        event
-    ):
-
+    def closeEvent(self, event):
+        self.detener_movimiento()
+        if self.hilo_camara:
+            self.hilo_camara.detener()
+            self.hilo_camara.wait(1000)
         self.hilo.detener()
-
+        self.hilo.wait(500)
+        if self.hilo.isRunning():
+            self.hilo.terminate()
         event.accept()
 
 
@@ -748,15 +406,9 @@ class ControlCentral(QMainWindow):
 # ============================================================
 
 if __name__ == "__main__":
-
-    app = QApplication(
-        sys.argv
-    )
-
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    app = QApplication(sys.argv)
     ventana = ControlCentral()
-
     ventana.showFullScreen()
-
-    sys.exit(
-        app.exec_()
-    )
+    sys.exit(app.exec_())

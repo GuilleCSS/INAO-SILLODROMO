@@ -1,6 +1,6 @@
 // --- PINES PARA EL PUENTE H (Ej. L298N o BTS7960) ---
 // Motor Izquierdo
-const int pinIN1 = 5; 
+const int pinIN1 = 5;
 const int pinIN2 = 6;
 // Motor Derecho
 const int pinIN3 = 9;
@@ -16,7 +16,7 @@ const int TIEMPO_MAXIMO_SIN_DATOS = 500; // Si pasan 500ms sin conexión, frena.
 
 void setup() {
   Serial.begin(9600); // Misma velocidad que configuraste en hardware_serial.py
-  
+
   pinMode(pinIN1, OUTPUT);
   pinMode(pinIN2, OUTPUT);
   pinMode(pinIN3, OUTPUT);
@@ -37,10 +37,13 @@ void loop() {
       case 'W': // Avanzar
         avanzar();
         break;
+      case 'R': // Regresar (retroceder)
+        retroceder();
+        break;
       case 'S': // Detener (Paro de emergencia o soltar clic)
         apagarMotores();
         break;
-      case 'A': // Girar Izquierda (Motor derecho avanza, izquierdo retrocede o se detiene)
+      case 'A': // Girar Izquierda
         girarIzquierda();
         break;
       case 'D': // Girar Derecha
@@ -60,32 +63,45 @@ void loop() {
   }
 }
 
+// --- PRIMITIVAS POR MOTOR ---
+// IMPORTANTE: con el cableado reportado, el patrón HIGH/LOW que antes se
+// usaba para "avanzar" hacía que la silla completa fuera hacia atrás con
+// cualquier botón. Eso indica polaridad invertida en el cableado del motor
+// (no una confusión de letras), así que aquí se invirtió el patrón de
+// "adelante"/"atrás" por motor. Verifica con las ruedas levantadas del piso
+// antes de usarla con alguien sentado.
+
+void motorIzquierdoAdelante() { digitalWrite(pinIN1, LOW);  digitalWrite(pinIN2, HIGH); }
+void motorIzquierdoAtras()    { digitalWrite(pinIN1, HIGH); digitalWrite(pinIN2, LOW);  }
+void motorIzquierdoParar()    { digitalWrite(pinIN1, LOW);  digitalWrite(pinIN2, LOW);  }
+
+void motorDerechoAdelante() { digitalWrite(pinIN3, LOW);  digitalWrite(pinIN4, HIGH); }
+void motorDerechoAtras()    { digitalWrite(pinIN3, HIGH); digitalWrite(pinIN4, LOW);  }
+void motorDerechoParar()    { digitalWrite(pinIN3, LOW);  digitalWrite(pinIN4, LOW);  }
+
 // --- FUNCIONES DE MOVIMIENTO ---
 
 void avanzar() {
-  digitalWrite(pinIN1, HIGH);
-  digitalWrite(pinIN2, LOW);
-  digitalWrite(pinIN3, HIGH);
-  digitalWrite(pinIN4, LOW);
+  motorIzquierdoAdelante();
+  motorDerechoAdelante();
+}
+
+void retroceder() {
+  motorIzquierdoAtras();
+  motorDerechoAtras();
 }
 
 void apagarMotores() {
-  digitalWrite(pinIN1, LOW);
-  digitalWrite(pinIN2, LOW);
-  digitalWrite(pinIN3, LOW);
-  digitalWrite(pinIN4, LOW);
+  motorIzquierdoParar();
+  motorDerechoParar();
 }
 
 void girarIzquierda() {
-  digitalWrite(pinIN1, LOW);  // Izquierdo se detiene o va en reversa
-  digitalWrite(pinIN2, HIGH); 
-  digitalWrite(pinIN3, HIGH); // Derecho empuja
-  digitalWrite(pinIN4, LOW);
+  motorIzquierdoParar();    // rueda izquierda se detiene
+  motorDerechoAdelante();   // rueda derecha empuja hacia adelante
 }
 
 void girarDerecha() {
-  digitalWrite(pinIN1, HIGH); // Izquierdo empuja
-  digitalWrite(pinIN2, LOW);
-  digitalWrite(pinIN3, LOW);  // Derecho se detiene o va en reversa
-  digitalWrite(pinIN4, HIGH);
+  motorIzquierdoAdelante(); // rueda izquierda empuja hacia adelante
+  motorDerechoParar();      // rueda derecha se detiene
 }

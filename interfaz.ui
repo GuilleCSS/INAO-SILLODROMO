@@ -6,275 +6,1641 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1280</width>
-    <height>720</height>
+    <width>1600</width>
+    <height>900</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
-    <width>1280</width>
-    <height>720</height>
-   </size>
-  </property>
-  <property name="maximumSize">
-   <size>
-    <width>1000</width>
-    <height>700</height>
+    <width>1180</width>
+    <height>680</height>
    </size>
   </property>
   <property name="windowTitle">
-   <string>MainWindow</string>
+   <string>Sillodromo · Control facial</string>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">
+QMainWindow, QWidget#centralwidget {
+    background-color: #0A0F1C;
+}
+QWidget {
+    font-family: &quot;Segoe UI&quot;;
+    color: #E8EEF9;
+}
+QLabel {
+    background: transparent;
+}
+/* ---------- Paneles ---------- */
+QFrame#frameHeader, QFrame#frameFooter, QFrame#frameCamara {
+    background-color: #111827;
+    border: 1px solid #26324D;
+    border-radius: 20px;
+}
+/* ---------- Encabezado ---------- */
+QLabel#lblLogo {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #22D3EE, stop:1 #3B82F6);
+    border-radius: 14px;
+    color: #FFFFFF;
+    font-size: 22px;
+    font-weight: 800;
+}
+QLabel#lblMarca {
+    font-size: 24px;
+    font-weight: 800;
+}
+QLabel#lblSubMarca {
+    color: #8B9AB8;
+    font-size: 14px;
+}
+QLabel#lblReloj {
+    font-size: 28px;
+    font-weight: 700;
+    padding-left: 8px;
+}
+/* ---------- Chips de estado ---------- */
+QLabel[rol=&quot;chip&quot;] {
+    padding: 7px 16px;
+    border-radius: 17px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #8B9AB8;
+    background-color: #18223A;
+    border: 1px solid #26324D;
+}
+QLabel[rol=&quot;chip&quot;][estado=&quot;ok&quot;] {
+    color: #4ADE80;
+    background-color: rgba(34, 197, 94, 30);
+    border: 1px solid rgba(34, 197, 94, 120);
+}
+QLabel[rol=&quot;chip&quot;][estado=&quot;move&quot;] {
+    color: #FFFFFF;
+    background-color: rgba(34, 197, 94, 150);
+    border: 1px solid #4ADE80;
+}
+QLabel[rol=&quot;chip&quot;][estado=&quot;warn&quot;] {
+    color: #FBBF24;
+    background-color: rgba(245, 158, 11, 30);
+    border: 1px solid rgba(245, 158, 11, 120);
+}
+QLabel[rol=&quot;chip&quot;][estado=&quot;error&quot;] {
+    color: #F87171;
+    background-color: rgba(239, 68, 68, 30);
+    border: 1px solid rgba(239, 68, 68, 120);
+}
+/* ---------- Títulos de sección ---------- */
+QLabel[rol=&quot;seccion&quot;] {
+    color: #8B9AB8;
+    font-size: 13px;
+    font-weight: 800;
+}
+QLabel[rol=&quot;ayuda&quot;] {
+    color: #8B9AB8;
+    font-size: 14px;
+}
+QLabel#lblDireccion {
+    font-size: 16px;
+    font-weight: 700;
+}
+/* ---------- Tarjetas de dispositivos ---------- */
+QFrame[rol=&quot;tarjeta&quot;] {
+    background-color: #111827;
+    border: 2px solid #26324D;
+    border-radius: 18px;
+}
+QFrame[rol=&quot;tarjeta&quot;][encendido=&quot;true&quot;] {
+    border: 2px solid rgba(34, 197, 94, 170);
+}
+QLabel[rol=&quot;dispositivo&quot;] {
+    font-size: 19px;
+    font-weight: 700;
+}
+QLabel[rol=&quot;pill&quot;] {
+    padding: 3px 10px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #8B9AB8;
+    background-color: rgba(100, 116, 139, 40);
+    border: 1px solid rgba(100, 116, 139, 110);
+}
+QLabel[rol=&quot;pill&quot;][estado=&quot;on&quot;] {
+    color: #4ADE80;
+    background-color: rgba(34, 197, 94, 35);
+    border: 1px solid rgba(34, 197, 94, 120);
+}
+/* ---------- Pie ---------- */
+QLabel#label_estado {
+    font-size: 17px;
+    font-weight: 600;
+}
+/* ---------- Botón calibrar ---------- */
+QPushButton#btnCalibrar {
+    padding: 7px 16px;
+    border-radius: 17px;
+    font-size: 14px;
+    font-weight: 700;
+    color: #22D3EE;
+    background-color: rgba(34, 211, 238, 25);
+    border: 1px solid rgba(34, 211, 238, 130);
+}
+QPushButton#btnCalibrar:hover {
+    background-color: rgba(34, 211, 238, 55);
+    border: 1px solid #22D3EE;
+}
+QPushButton#btnCalibrar:pressed {
+    background-color: rgba(34, 211, 238, 90);
+}
+</string>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <widget class="QPushButton" name="btn_luz">
-    <property name="geometry">
-     <rect>
-      <x>9</x>
-      <y>468</y>
-      <width>1000</width>
-      <height>200</height>
-     </rect>
+   <layout class="QVBoxLayout" name="layoutRaiz" stretch="0,1,0">
+    <property name="spacing">
+     <number>14</number>
     </property>
-    <property name="sizePolicy">
-     <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-      <horstretch>0</horstretch>
-      <verstretch>0</verstretch>
-     </sizepolicy>
+    <property name="leftMargin">
+     <number>20</number>
     </property>
-    <property name="minimumSize">
-     <size>
-      <width>0</width>
-      <height>0</height>
-     </size>
+    <property name="topMargin">
+     <number>16</number>
     </property>
-    <property name="maximumSize">
-     <size>
-      <width>16777215</width>
-      <height>200</height>
-     </size>
+    <property name="rightMargin">
+     <number>20</number>
     </property>
-    <property name="styleSheet">
-     <string notr="true">QPushButton {
-    background-color: #F1C40F; /* Amarillo luz */
-    color: #333333; /* Texto oscuro para contrastar con el amarillo */
-    border: 2px solid #F39C12;
-    font-size: 24px;
-    font-weight: bold;
-}
-QPushButton:hover { background-color: #F39C12; }</string>
+    <property name="bottomMargin">
+     <number>16</number>
     </property>
-    <property name="text">
-     <string>Encender Luz</string>
-    </property>
-   </widget>
-   <widget class="QPushButton" name="btn_girar_der">
-    <property name="geometry">
-     <rect>
-      <x>796</x>
-      <y>235</y>
-      <width>500</width>
-      <height>300</height>
-     </rect>
-    </property>
-    <property name="sizePolicy">
-     <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-      <horstretch>0</horstretch>
-      <verstretch>0</verstretch>
-     </sizepolicy>
-    </property>
-    <property name="minimumSize">
-     <size>
-      <width>0</width>
-      <height>0</height>
-     </size>
-    </property>
-    <property name="maximumSize">
-     <size>
-      <width>16777215</width>
-      <height>300</height>
-     </size>
-    </property>
-    <property name="styleSheet">
-     <string notr="true">QPushButton {
-    background-color: #3498DB; /* Azul direccional */
-    color: white;
-    border: 2px solid #2980B9;
-    font-size: 22px;
-    font-weight: bold;
-}
-QPushButton:hover { background-color: #2980B9; }</string>
-    </property>
-    <property name="text">
-     <string>Girar Derecha</string>
-    </property>
-   </widget>
-   <widget class="QPushButton" name="btn_detener">
-    <property name="enabled">
-     <bool>true</bool>
-    </property>
-    <property name="geometry">
-     <rect>
-      <x>490</x>
-      <y>235</y>
-      <width>300</width>
-      <height>300</height>
-     </rect>
-    </property>
-    <property name="sizePolicy">
-     <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-      <horstretch>0</horstretch>
-      <verstretch>0</verstretch>
-     </sizepolicy>
-    </property>
-    <property name="minimumSize">
-     <size>
-      <width>0</width>
-      <height>0</height>
-     </size>
-    </property>
-    <property name="maximumSize">
-     <size>
-      <width>16777215</width>
-      <height>300</height>
-     </size>
-    </property>
-    <property name="styleSheet">
-     <string notr="true">QPushButton {
-    background-color: #5C0A18; /* Color rojo de emergencia */
-    color: white;
-    border-radius: 150px; /* LA MAGIA: Debe ser exactamente la mitad de tu ancho/alto (200 / 2 = 100) */
-    border: 4px solid #900C3F; /* Borde oscuro para dar profundidad */
-    font-size: 15px;
-    font-weight: bold;
-}
-
-QPushButton:hover {
-    background-color: #FF4D4D; /* Brilla un poco cuando el cursor pasa por encima */
-}
-
-QPushButton:pressed {
-    background-color: #8B0000; /* Se oscurece al hacer clic */
-}</string>
-    </property>
-    <property name="text">
-     <string>PARO DE EMERGENCIA</string>
-    </property>
-   </widget>
-   <widget class="QLabel" name="label_estado">
-    <property name="geometry">
-     <rect>
-      <x>9</x>
-      <y>9</y>
-      <width>124</width>
-      <height>16</height>
-     </rect>
-    </property>
-    <property name="text">
-     <string>Esperando inicialización...</string>
-    </property>
-   </widget>
-   <widget class="QPushButton" name="btn_avanzar">
-    <property name="geometry">
-     <rect>
-      <x>9</x>
-      <y>29</y>
-      <width>1000</width>
-      <height>200</height>
-     </rect>
-    </property>
-    <property name="sizePolicy">
-     <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-      <horstretch>0</horstretch>
-      <verstretch>0</verstretch>
-     </sizepolicy>
-    </property>
-    <property name="minimumSize">
-     <size>
-      <width>0</width>
-      <height>0</height>
-     </size>
-    </property>
-    <property name="maximumSize">
-     <size>
-      <width>16777215</width>
-      <height>200</height>
-     </size>
-    </property>
-    <property name="styleSheet">
-     <string notr="true">QPushButton {
-    background-color: #2ECC71; /* Verde brillante */
-    color: white;
-    border: 2px solid #27AE60;
-    font-size: 24px;
-    font-weight: bold;
-}
-QPushButton:hover { background-color: #27AE60; }</string>
-    </property>
-    <property name="text">
-     <string>Avanzar / Continuo</string>
-    </property>
-   </widget>
-   <widget class="QPushButton" name="btn_girar_izq">
-    <property name="geometry">
-     <rect>
-      <x>9</x>
-      <y>235</y>
-      <width>500</width>
-      <height>300</height>
-     </rect>
-    </property>
-    <property name="sizePolicy">
-     <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-      <horstretch>0</horstretch>
-      <verstretch>0</verstretch>
-     </sizepolicy>
-    </property>
-    <property name="minimumSize">
-     <size>
-      <width>0</width>
-      <height>0</height>
-     </size>
-    </property>
-    <property name="maximumSize">
-     <size>
-      <width>16777215</width>
-      <height>300</height>
-     </size>
-    </property>
-    <property name="styleSheet">
-     <string notr="true">QPushButton {
-    background-color: #3498DB; /* Azul direccional */
-    color: white;
-    border: 2px solid #2980B9;
-    font-size: 22px;
-    font-weight: bold;
-}
-QPushButton:hover { background-color: #2980B9; }
-</string>
-    </property>
-    <property name="text">
-     <string>Girar Izquierda</string>
-    </property>
-   </widget>
-   <zorder>btn_luz</zorder>
-   <zorder>btn_girar_der</zorder>
-   <zorder>label_estado</zorder>
-   <zorder>btn_avanzar</zorder>
-   <zorder>btn_girar_izq</zorder>
-   <zorder>btn_detener</zorder>
+    <item>
+     <widget class="QFrame" name="frameHeader">
+      <property name="frameShape">
+       <enum>QFrame::NoFrame</enum>
+      </property>
+      <layout class="QHBoxLayout" name="layoutHeader">
+       <property name="spacing">
+        <number>16</number>
+       </property>
+       <property name="leftMargin">
+        <number>16</number>
+       </property>
+       <property name="topMargin">
+        <number>12</number>
+       </property>
+       <property name="rightMargin">
+        <number>20</number>
+       </property>
+       <property name="bottomMargin">
+        <number>12</number>
+       </property>
+       <item>
+        <widget class="QLabel" name="lblLogo">
+         <property name="text">
+          <string>S</string>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>48</width>
+           <height>48</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>48</width>
+           <height>48</height>
+          </size>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignCenter</set>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QVBoxLayout" name="layoutMarca">
+         <property name="spacing">
+          <number>0</number>
+         </property>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="QLabel" name="lblMarca">
+           <property name="text">
+            <string>SILLODROMO</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="lblSubMarca">
+           <property name="text">
+            <string>Control facial accesible</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <spacer name="spHeader">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QLabel" name="chipSistema">
+         <property name="text">
+          <string>●  Iniciando…</string>
+         </property>
+         <property name="rol" stdset="0">
+          <string>chip</string>
+         </property>
+         <property name="estado" stdset="0">
+          <string>warn</string>
+         </property>
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="chipSilla">
+         <property name="text">
+          <string>●  Silla detenida</string>
+         </property>
+         <property name="rol" stdset="0">
+          <string>chip</string>
+         </property>
+         <property name="estado" stdset="0">
+          <string>idle</string>
+         </property>
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="btnCalibrar">
+         <property name="text">
+          <string>⟲  Calibrar cursor</string>
+         </property>
+         <property name="cursor">
+          <cursorShape>PointingHandCursor</cursorShape>
+         </property>
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="lblReloj">
+         <property name="text">
+          <string>00:00</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <layout class="QHBoxLayout" name="layoutCuerpo" stretch="3,7">
+      <property name="spacing">
+       <number>16</number>
+      </property>
+      <property name="leftMargin">
+       <number>0</number>
+      </property>
+      <property name="topMargin">
+       <number>0</number>
+      </property>
+      <property name="rightMargin">
+       <number>0</number>
+      </property>
+      <property name="bottomMargin">
+       <number>0</number>
+      </property>
+      <item>
+       <widget class="QFrame" name="frameCamara">
+        <property name="frameShape">
+         <enum>QFrame::NoFrame</enum>
+        </property>
+        <layout class="QVBoxLayout" name="layoutCamara">
+         <property name="spacing">
+          <number>12</number>
+         </property>
+         <property name="leftMargin">
+          <number>16</number>
+         </property>
+         <property name="topMargin">
+          <number>14</number>
+         </property>
+         <property name="rightMargin">
+          <number>16</number>
+         </property>
+         <property name="bottomMargin">
+          <number>16</number>
+         </property>
+         <item>
+          <layout class="QHBoxLayout" name="layoutCamaraTitulo">
+           <property name="spacing">
+            <number>8</number>
+           </property>
+           <property name="leftMargin">
+            <number>4</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>4</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="lblTituloCamara">
+             <property name="text">
+              <string>CÁMARA · RASTREO FACIAL</string>
+             </property>
+             <property name="rol" stdset="0">
+              <string>seccion</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="spCamara">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>20</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item>
+            <widget class="QLabel" name="lblInfoCamara">
+             <property name="text">
+              <string>Iniciando…</string>
+             </property>
+             <property name="rol" stdset="0">
+              <string>ayuda</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <widget class="VistaCamara" name="vistaCamara">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+             <horstretch>0</horstretch>
+             <verstretch>1</verstretch>
+            </sizepolicy>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="layoutSensores">
+           <property name="spacing">
+            <number>16</number>
+           </property>
+           <property name="leftMargin">
+            <number>4</number>
+           </property>
+           <property name="topMargin">
+            <number>4</number>
+           </property>
+           <property name="rightMargin">
+            <number>4</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="IndicadorCabeza" name="indCabeza">
+             <property name="minimumSize">
+              <size>
+               <width>68</width>
+               <height>68</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>68</width>
+               <height>68</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <layout class="QVBoxLayout" name="layoutDireccion">
+             <property name="spacing">
+              <number>2</number>
+             </property>
+             <property name="leftMargin">
+              <number>0</number>
+             </property>
+             <property name="topMargin">
+              <number>0</number>
+             </property>
+             <property name="rightMargin">
+              <number>0</number>
+             </property>
+             <property name="bottomMargin">
+              <number>0</number>
+             </property>
+             <item>
+              <widget class="QLabel" name="lblCaptionCabeza">
+               <property name="text">
+                <string>CABEZA</string>
+               </property>
+               <property name="rol" stdset="0">
+                <string>seccion</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="lblDireccion">
+               <property name="text">
+                <string>—</string>
+               </property>
+               <property name="minimumSize">
+                <size>
+                 <width>150</width>
+                 <height>0</height>
+                </size>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item>
+            <widget class="IndicadorBoca" name="indBoca">
+             <property name="minimumSize">
+              <size>
+               <width>160</width>
+               <height>56</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>16777215</width>
+               <height>56</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <layout class="QVBoxLayout" name="layoutControles" stretch="0,9,0,5">
+        <property name="spacing">
+         <number>12</number>
+        </property>
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="topMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
+        <property name="bottomMargin">
+         <number>0</number>
+        </property>
+        <item>
+         <layout class="QHBoxLayout" name="layoutTituloMov">
+          <property name="spacing">
+           <number>8</number>
+          </property>
+          <property name="leftMargin">
+           <number>6</number>
+          </property>
+          <property name="topMargin">
+           <number>0</number>
+          </property>
+          <property name="rightMargin">
+           <number>6</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="lblSeccionMov">
+            <property name="text">
+             <string>MOVIMIENTO DE LA SILLA</string>
+            </property>
+            <property name="rol" stdset="0">
+             <string>seccion</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="spMov">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>20</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QLabel" name="lblAyudaMov">
+            <property name="text">
+             <string>Mantén la boca abierta sobre una dirección · ciérrala para detener</string>
+            </property>
+            <property name="rol" stdset="0">
+             <string>ayuda</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QGridLayout" name="layoutMovimiento" rowstretch="1,1,1" columnstretch="1,1,1">
+          <property name="horizontalSpacing">
+           <number>14</number>
+          </property>
+          <property name="verticalSpacing">
+           <number>14</number>
+          </property>
+          <property name="leftMargin">
+           <number>0</number>
+          </property>
+          <property name="topMargin">
+           <number>0</number>
+          </property>
+          <property name="rightMargin">
+           <number>0</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
+          </property>
+          <item row="0" column="1">
+           <widget class="TileButton" name="btn_avanzar">
+            <property name="text">
+             <string>Avanzar</string>
+            </property>
+            <property name="icono" stdset="0">
+             <string>arriba</string>
+            </property>
+            <property name="acento" stdset="0">
+             <string>#22C55E</string>
+            </property>
+            <property name="subtitulo" stdset="0">
+             <string>Mantén la boca abierta</string>
+            </property>
+            <property name="subtituloActivo" stdset="0">
+             <string>Cierra la boca para detener</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="TileButton" name="btn_girar_izq">
+            <property name="text">
+             <string>Girar izquierda</string>
+            </property>
+            <property name="icono" stdset="0">
+             <string>izquierda</string>
+            </property>
+            <property name="acento" stdset="0">
+             <string>#3B82F6</string>
+            </property>
+            <property name="subtitulo" stdset="0">
+             <string>Mantén la boca abierta</string>
+            </property>
+            <property name="subtituloActivo" stdset="0">
+             <string>Cierra la boca para detener</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="2">
+           <widget class="TileButton" name="btn_girar_der">
+            <property name="text">
+             <string>Girar derecha</string>
+            </property>
+            <property name="icono" stdset="0">
+             <string>derecha</string>
+            </property>
+            <property name="acento" stdset="0">
+             <string>#3B82F6</string>
+            </property>
+            <property name="subtitulo" stdset="0">
+             <string>Mantén la boca abierta</string>
+            </property>
+            <property name="subtituloActivo" stdset="0">
+             <string>Cierra la boca para detener</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="TileButton" name="btn_regresar">
+            <property name="text">
+             <string>Regresar</string>
+            </property>
+            <property name="icono" stdset="0">
+             <string>abajo</string>
+            </property>
+            <property name="acento" stdset="0">
+             <string>#F59E0B</string>
+            </property>
+            <property name="subtitulo" stdset="0">
+             <string>Mantén la boca abierta</string>
+            </property>
+            <property name="subtituloActivo" stdset="0">
+             <string>Cierra la boca para detener</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="layoutTituloDom">
+          <property name="spacing">
+           <number>8</number>
+          </property>
+          <property name="leftMargin">
+           <number>6</number>
+          </property>
+          <property name="topMargin">
+           <number>4</number>
+          </property>
+          <property name="rightMargin">
+           <number>6</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="lblSeccionDom">
+            <property name="text">
+             <string>HOGAR · ALEXA</string>
+            </property>
+            <property name="rol" stdset="0">
+             <string>seccion</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="spDom">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>20</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QLabel" name="lblAyudaDom">
+            <property name="text">
+             <string>Abre y cierra la boca sobre un botón</string>
+            </property>
+            <property name="rol" stdset="0">
+             <string>ayuda</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QGridLayout" name="layoutDomotica" rowstretch="1,1" columnstretch="1,1,1">
+          <property name="horizontalSpacing">
+           <number>14</number>
+          </property>
+          <property name="leftMargin">
+           <number>0</number>
+          </property>
+          <property name="topMargin">
+           <number>0</number>
+          </property>
+          <property name="rightMargin">
+           <number>0</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
+          </property>
+          <property name="verticalSpacing">
+           <number>14</number>
+          </property>
+          <item row="0" column="0">
+           <widget class="QFrame" name="tarjeta_1">
+            <property name="rol" stdset="0">
+             <string>tarjeta</string>
+            </property>
+            <property name="frameShape">
+             <enum>QFrame::NoFrame</enum>
+            </property>
+            <layout class="QVBoxLayout" name="layoutTarjeta_1" stretch="0,1">
+             <property name="spacing">
+              <number>8</number>
+             </property>
+             <property name="leftMargin">
+              <number>12</number>
+             </property>
+             <property name="topMargin">
+              <number>10</number>
+             </property>
+             <property name="rightMargin">
+              <number>12</number>
+             </property>
+             <property name="bottomMargin">
+              <number>12</number>
+             </property>
+             <item>
+              <layout class="QHBoxLayout" name="layoutTarjetaCab_1">
+               <property name="spacing">
+                <number>8</number>
+               </property>
+               <property name="leftMargin">
+                <number>4</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="lbl_disp_1">
+                 <property name="text">
+                  <string>Enchufe 2</string>
+                 </property>
+                 <property name="rol" stdset="0">
+                  <string>dispositivo</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <spacer name="spTarjeta_1">
+                 <property name="orientation">
+                  <enum>Qt::Horizontal</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>20</width>
+                   <height>20</height>
+                  </size>
+                 </property>
+                </spacer>
+               </item>
+               <item>
+                <widget class="QLabel" name="lbl_estado_1">
+                 <property name="text">
+                  <string>SIN ESTADO</string>
+                 </property>
+                 <property name="rol" stdset="0">
+                  <string>pill</string>
+                 </property>
+                 <property name="estado" stdset="0">
+                  <string>none</string>
+                 </property>
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="layoutTarjetaBtn_1">
+               <property name="spacing">
+                <number>10</number>
+               </property>
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="TileButton" name="btn_on_1">
+                 <property name="text">
+                  <string>Encender</string>
+                 </property>
+                 <property name="icono" stdset="0">
+                  <string>power</string>
+                 </property>
+                 <property name="acento" stdset="0">
+                  <string>#22C55E</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="TileButton" name="btn_off_1">
+                 <property name="text">
+                  <string>Apagar</string>
+                 </property>
+                 <property name="icono" stdset="0">
+                  <string>power</string>
+                 </property>
+                 <property name="acento" stdset="0">
+                  <string>#64748B</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QFrame" name="tarjeta_2">
+            <property name="rol" stdset="0">
+             <string>tarjeta</string>
+            </property>
+            <property name="frameShape">
+             <enum>QFrame::NoFrame</enum>
+            </property>
+            <layout class="QVBoxLayout" name="layoutTarjeta_2" stretch="0,1">
+             <property name="spacing">
+              <number>8</number>
+             </property>
+             <property name="leftMargin">
+              <number>12</number>
+             </property>
+             <property name="topMargin">
+              <number>10</number>
+             </property>
+             <property name="rightMargin">
+              <number>12</number>
+             </property>
+             <property name="bottomMargin">
+              <number>12</number>
+             </property>
+             <item>
+              <layout class="QHBoxLayout" name="layoutTarjetaCab_2">
+               <property name="spacing">
+                <number>8</number>
+               </property>
+               <property name="leftMargin">
+                <number>4</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="lbl_disp_2">
+                 <property name="text">
+                  <string>Enchufe 3</string>
+                 </property>
+                 <property name="rol" stdset="0">
+                  <string>dispositivo</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <spacer name="spTarjeta_2">
+                 <property name="orientation">
+                  <enum>Qt::Horizontal</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>20</width>
+                   <height>20</height>
+                  </size>
+                 </property>
+                </spacer>
+               </item>
+               <item>
+                <widget class="QLabel" name="lbl_estado_2">
+                 <property name="text">
+                  <string>SIN ESTADO</string>
+                 </property>
+                 <property name="rol" stdset="0">
+                  <string>pill</string>
+                 </property>
+                 <property name="estado" stdset="0">
+                  <string>none</string>
+                 </property>
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="layoutTarjetaBtn_2">
+               <property name="spacing">
+                <number>10</number>
+               </property>
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="TileButton" name="btn_on_2">
+                 <property name="text">
+                  <string>Encender</string>
+                 </property>
+                 <property name="icono" stdset="0">
+                  <string>power</string>
+                 </property>
+                 <property name="acento" stdset="0">
+                  <string>#22C55E</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="TileButton" name="btn_off_2">
+                 <property name="text">
+                  <string>Apagar</string>
+                 </property>
+                 <property name="icono" stdset="0">
+                  <string>power</string>
+                 </property>
+                 <property name="acento" stdset="0">
+                  <string>#64748B</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item row="0" column="2">
+           <widget class="QFrame" name="tarjeta_3">
+            <property name="rol" stdset="0">
+             <string>tarjeta</string>
+            </property>
+            <property name="frameShape">
+             <enum>QFrame::NoFrame</enum>
+            </property>
+            <layout class="QVBoxLayout" name="layoutTarjeta_3" stretch="0,1">
+             <property name="spacing">
+              <number>8</number>
+             </property>
+             <property name="leftMargin">
+              <number>12</number>
+             </property>
+             <property name="topMargin">
+              <number>10</number>
+             </property>
+             <property name="rightMargin">
+              <number>12</number>
+             </property>
+             <property name="bottomMargin">
+              <number>12</number>
+             </property>
+             <item>
+              <layout class="QHBoxLayout" name="layoutTarjetaCab_3">
+               <property name="spacing">
+                <number>8</number>
+               </property>
+               <property name="leftMargin">
+                <number>4</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="lbl_disp_3">
+                 <property name="text">
+                  <string>Secadora 1</string>
+                 </property>
+                 <property name="rol" stdset="0">
+                  <string>dispositivo</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <spacer name="spTarjeta_3">
+                 <property name="orientation">
+                  <enum>Qt::Horizontal</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>20</width>
+                   <height>20</height>
+                  </size>
+                 </property>
+                </spacer>
+               </item>
+               <item>
+                <widget class="QLabel" name="lbl_estado_3">
+                 <property name="text">
+                  <string>SIN ESTADO</string>
+                 </property>
+                 <property name="rol" stdset="0">
+                  <string>pill</string>
+                 </property>
+                 <property name="estado" stdset="0">
+                  <string>none</string>
+                 </property>
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="layoutTarjetaBtn_3">
+               <property name="spacing">
+                <number>10</number>
+               </property>
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="TileButton" name="btn_on_3">
+                 <property name="text">
+                  <string>Encender</string>
+                 </property>
+                 <property name="icono" stdset="0">
+                  <string>power</string>
+                 </property>
+                 <property name="acento" stdset="0">
+                  <string>#22C55E</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="TileButton" name="btn_off_3">
+                 <property name="text">
+                  <string>Apagar</string>
+                 </property>
+                 <property name="icono" stdset="0">
+                  <string>power</string>
+                 </property>
+                 <property name="acento" stdset="0">
+                  <string>#64748B</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QFrame" name="tarjeta_4">
+            <property name="rol" stdset="0">
+             <string>tarjeta</string>
+            </property>
+            <property name="frameShape">
+             <enum>QFrame::NoFrame</enum>
+            </property>
+            <layout class="QVBoxLayout" name="layoutTarjeta_4" stretch="0,1">
+             <property name="spacing">
+              <number>8</number>
+             </property>
+             <property name="leftMargin">
+              <number>12</number>
+             </property>
+             <property name="topMargin">
+              <number>10</number>
+             </property>
+             <property name="rightMargin">
+              <number>12</number>
+             </property>
+             <property name="bottomMargin">
+              <number>12</number>
+             </property>
+             <item>
+              <layout class="QHBoxLayout" name="layoutTarjetaCab_4">
+               <property name="spacing">
+                <number>8</number>
+               </property>
+               <property name="leftMargin">
+                <number>4</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="lbl_disp_4">
+                 <property name="text">
+                  <string>Ventilador 2</string>
+                 </property>
+                 <property name="rol" stdset="0">
+                  <string>dispositivo</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <spacer name="spTarjeta_4">
+                 <property name="orientation">
+                  <enum>Qt::Horizontal</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>20</width>
+                   <height>20</height>
+                  </size>
+                 </property>
+                </spacer>
+               </item>
+               <item>
+                <widget class="QLabel" name="lbl_estado_4">
+                 <property name="text">
+                  <string>SIN ESTADO</string>
+                 </property>
+                 <property name="rol" stdset="0">
+                  <string>pill</string>
+                 </property>
+                 <property name="estado" stdset="0">
+                  <string>none</string>
+                 </property>
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="layoutTarjetaBtn_4">
+               <property name="spacing">
+                <number>10</number>
+               </property>
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="TileButton" name="btn_on_4">
+                 <property name="text">
+                  <string>Encender</string>
+                 </property>
+                 <property name="icono" stdset="0">
+                  <string>power</string>
+                 </property>
+                 <property name="acento" stdset="0">
+                  <string>#22C55E</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="TileButton" name="btn_off_4">
+                 <property name="text">
+                  <string>Apagar</string>
+                 </property>
+                 <property name="icono" stdset="0">
+                  <string>power</string>
+                 </property>
+                 <property name="acento" stdset="0">
+                  <string>#64748B</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QFrame" name="tarjeta_5">
+            <property name="rol" stdset="0">
+             <string>tarjeta</string>
+            </property>
+            <property name="frameShape">
+             <enum>QFrame::NoFrame</enum>
+            </property>
+            <layout class="QVBoxLayout" name="layoutTarjeta_5" stretch="0,1">
+             <property name="spacing">
+              <number>8</number>
+             </property>
+             <property name="leftMargin">
+              <number>12</number>
+             </property>
+             <property name="topMargin">
+              <number>10</number>
+             </property>
+             <property name="rightMargin">
+              <number>12</number>
+             </property>
+             <property name="bottomMargin">
+              <number>12</number>
+             </property>
+             <item>
+              <layout class="QHBoxLayout" name="layoutTarjetaCab_5">
+               <property name="spacing">
+                <number>8</number>
+               </property>
+               <property name="leftMargin">
+                <number>4</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="lbl_disp_5">
+                 <property name="text">
+                  <string>Alexa 2</string>
+                 </property>
+                 <property name="rol" stdset="0">
+                  <string>dispositivo</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <spacer name="spTarjeta_5">
+                 <property name="orientation">
+                  <enum>Qt::Horizontal</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>20</width>
+                   <height>20</height>
+                  </size>
+                 </property>
+                </spacer>
+               </item>
+               <item>
+                <widget class="QLabel" name="lbl_estado_5">
+                 <property name="text">
+                  <string>SIN ESTADO</string>
+                 </property>
+                 <property name="rol" stdset="0">
+                  <string>pill</string>
+                 </property>
+                 <property name="estado" stdset="0">
+                  <string>none</string>
+                 </property>
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="layoutTarjetaBtn_5">
+               <property name="spacing">
+                <number>10</number>
+               </property>
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="TileButton" name="btn_on_5">
+                 <property name="text">
+                  <string>Encender</string>
+                 </property>
+                 <property name="icono" stdset="0">
+                  <string>power</string>
+                 </property>
+                 <property name="acento" stdset="0">
+                  <string>#22C55E</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="TileButton" name="btn_off_5">
+                 <property name="text">
+                  <string>Apagar</string>
+                 </property>
+                 <property name="icono" stdset="0">
+                  <string>power</string>
+                 </property>
+                 <property name="acento" stdset="0">
+                  <string>#64748B</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item row="1" column="2">
+           <widget class="QFrame" name="tarjeta_6">
+            <property name="rol" stdset="0">
+             <string>tarjeta</string>
+            </property>
+            <property name="frameShape">
+             <enum>QFrame::NoFrame</enum>
+            </property>
+            <layout class="QVBoxLayout" name="layoutTarjeta_6" stretch="0,1">
+             <property name="spacing">
+              <number>8</number>
+             </property>
+             <property name="leftMargin">
+              <number>12</number>
+             </property>
+             <property name="topMargin">
+              <number>10</number>
+             </property>
+             <property name="rightMargin">
+              <number>12</number>
+             </property>
+             <property name="bottomMargin">
+              <number>12</number>
+             </property>
+             <item>
+              <layout class="QHBoxLayout" name="layoutTarjetaCab_6">
+               <property name="spacing">
+                <number>8</number>
+               </property>
+               <property name="leftMargin">
+                <number>4</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="lbl_disp_6">
+                 <property name="text">
+                  <string>Cafetera 2</string>
+                 </property>
+                 <property name="rol" stdset="0">
+                  <string>dispositivo</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <spacer name="spTarjeta_6">
+                 <property name="orientation">
+                  <enum>Qt::Horizontal</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>20</width>
+                   <height>20</height>
+                  </size>
+                 </property>
+                </spacer>
+               </item>
+               <item>
+                <widget class="QLabel" name="lbl_estado_6">
+                 <property name="text">
+                  <string>SIN ESTADO</string>
+                 </property>
+                 <property name="rol" stdset="0">
+                  <string>pill</string>
+                 </property>
+                 <property name="estado" stdset="0">
+                  <string>none</string>
+                 </property>
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="layoutTarjetaBtn_6">
+               <property name="spacing">
+                <number>10</number>
+               </property>
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="TileButton" name="btn_on_6">
+                 <property name="text">
+                  <string>Encender</string>
+                 </property>
+                 <property name="icono" stdset="0">
+                  <string>power</string>
+                 </property>
+                 <property name="acento" stdset="0">
+                  <string>#22C55E</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="TileButton" name="btn_off_6">
+                 <property name="text">
+                  <string>Apagar</string>
+                 </property>
+                 <property name="icono" stdset="0">
+                  <string>power</string>
+                 </property>
+                 <property name="acento" stdset="0">
+                  <string>#64748B</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <widget class="QFrame" name="frameFooter">
+      <property name="frameShape">
+       <enum>QFrame::NoFrame</enum>
+      </property>
+      <layout class="QHBoxLayout" name="layoutFooter">
+       <property name="spacing">
+        <number>12</number>
+       </property>
+       <property name="leftMargin">
+        <number>18</number>
+       </property>
+       <property name="topMargin">
+        <number>10</number>
+       </property>
+       <property name="rightMargin">
+        <number>18</number>
+       </property>
+       <property name="bottomMargin">
+        <number>10</number>
+       </property>
+       <item>
+        <widget class="QLabel" name="label_estado">
+         <property name="text">
+          <string>Esperando inicialización…</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="spFooter">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QLabel" name="lblAyuda">
+         <property name="text">
+          <string>Cabeza: mover cursor   ·   Boca abierta: clic sostenido   ·   Ojos cerrados: pausar</string>
+         </property>
+         <property name="rol" stdset="0">
+          <string>ayuda</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+   </layout>
   </widget>
-  <widget class="QMenuBar" name="menubar">
-   <property name="geometry">
-    <rect>
-     <x>0</x>
-     <y>0</y>
-     <width>1280</width>
-     <height>22</height>
-    </rect>
-   </property>
-  </widget>
-  <widget class="QStatusBar" name="statusbar"/>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>TileButton</class>
+   <extends>QPushButton</extends>
+   <header>modulos/widgets.h</header>
+  </customwidget>
+  <customwidget>
+   <class>VistaCamara</class>
+   <extends>QWidget</extends>
+   <header>modulos/widgets.h</header>
+  </customwidget>
+  <customwidget>
+   <class>IndicadorCabeza</class>
+   <extends>QWidget</extends>
+   <header>modulos/widgets.h</header>
+  </customwidget>
+  <customwidget>
+   <class>IndicadorBoca</class>
+   <extends>QWidget</extends>
+   <header>modulos/widgets.h</header>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>
