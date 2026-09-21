@@ -6,7 +6,7 @@ import pyautogui
 
 
 # ============================================================
-# PYAUTOGUI
+# CONFIGURACIÓN PYAUTOGUI
 # ============================================================
 
 pyautogui.FAILSAFE = False
@@ -14,11 +14,18 @@ pyautogui.PAUSE = 0
 
 
 # ============================================================
-# RESIDUOS SUBPÍXEL
+# MOVIMIENTO SUBPÍXEL
 # ============================================================
 
 _residuo_x = 0.0
 _residuo_y = 0.0
+
+
+# ============================================================
+# ESTADO DEL BOTÓN IZQUIERDO
+# ============================================================
+
+_mouse_presionado = False
 
 
 # ============================================================
@@ -30,7 +37,6 @@ if os.name == "nt":
     user32 = ctypes.windll.user32
 
     class POINT(ctypes.Structure):
-
         _fields_ = [
             ("x", ctypes.c_long),
             ("y", ctypes.c_long)
@@ -41,49 +47,22 @@ if os.name == "nt":
 # MOVER CURSOR
 # ============================================================
 
-def mover_cursor(
-    dx,
-    dy
-):
+def mover_cursor(dx, dy):
 
     global _residuo_x
     global _residuo_y
 
-
-    # ========================================================
-    # ACUMULAR FRACCIONES
-    # ========================================================
-
     _residuo_x += dx
     _residuo_y += dy
 
+    desplazamiento_x = int(_residuo_x)
+    desplazamiento_y = int(_residuo_y)
 
-    desplazamiento_x = int(
-        _residuo_x
-    )
+    _residuo_x -= desplazamiento_x
+    _residuo_y -= desplazamiento_y
 
-    desplazamiento_y = int(
-        _residuo_y
-    )
-
-
-    _residuo_x -= (
-        desplazamiento_x
-    )
-
-    _residuo_y -= (
-        desplazamiento_y
-    )
-
-
-    if (
-        desplazamiento_x == 0
-        and
-        desplazamiento_y == 0
-    ):
-
+    if desplazamiento_x == 0 and desplazamiento_y == 0:
         return
-
 
     # ========================================================
     # WINDOWS
@@ -94,61 +73,32 @@ def mover_cursor(
         punto = POINT()
 
         user32.GetCursorPos(
-            ctypes.byref(
-                punto
-            )
+            ctypes.byref(punto)
         )
 
-        ancho = user32.GetSystemMetrics(
-            0
-        )
+        ancho = user32.GetSystemMetrics(0)
+        alto = user32.GetSystemMetrics(1)
 
-        alto = user32.GetSystemMetrics(
-            1
-        )
-
-        nueva_x = (
-            punto.x
-            +
-            desplazamiento_x
-        )
-
-        nueva_y = (
-            punto.y
-            +
-            desplazamiento_y
-        )
-
-
-        # ----------------------------------------------------
-        # LIMITAR A LA PANTALLA
-        # ----------------------------------------------------
+        nueva_x = punto.x + desplazamiento_x
+        nueva_y = punto.y + desplazamiento_y
 
         nueva_x = max(
             0,
-            min(
-                ancho - 1,
-                nueva_x
-            )
+            min(ancho - 1, nueva_x)
         )
 
         nueva_y = max(
             0,
-            min(
-                alto - 1,
-                nueva_y
-            )
+            min(alto - 1, nueva_y)
         )
-
 
         user32.SetCursorPos(
             nueva_x,
             nueva_y
         )
 
-
     # ========================================================
-    # LINUX / OTROS
+    # OTROS SISTEMAS
     # ========================================================
 
     else:
@@ -162,7 +112,7 @@ def mover_cursor(
 
 
 # ============================================================
-# CLIC
+# CLIC NORMAL
 # ============================================================
 
 def hacer_clic():
@@ -173,19 +123,62 @@ def hacer_clic():
 
 
 # ============================================================
-# FEEDBACK INMEDIATO
+# MANTENER BOTÓN PRESIONADO
+# ============================================================
+
+def presionar_mouse():
+
+    global _mouse_presionado
+
+    if not _mouse_presionado:
+
+        pyautogui.mouseDown(
+            button="left",
+            _pause=False
+        )
+
+        _mouse_presionado = True
+
+        print("[MOUSE] Botón izquierdo PRESIONADO")
+
+
+# ============================================================
+# SOLTAR BOTÓN
+# ============================================================
+
+def soltar_mouse():
+
+    global _mouse_presionado
+
+    if _mouse_presionado:
+
+        pyautogui.mouseUp(
+            button="left",
+            _pause=False
+        )
+
+        _mouse_presionado = False
+
+        print("[MOUSE] Botón izquierdo LIBERADO")
+
+
+# ============================================================
+# CONSULTAR ESTADO
+# ============================================================
+
+def mouse_esta_presionado():
+
+    return _mouse_presionado
+
+
+# ============================================================
+# FEEDBACK LOCAL
 # ============================================================
 
 def feedback_clic_inmediato():
-    """
-    Emite un sonido local inmediatamente después del clic.
-
-    No utiliza Edge TTS ni conexión a Internet.
-    """
 
     if os.name != "nt":
         return
-
 
     def reproducir():
 
@@ -195,15 +188,12 @@ def feedback_clic_inmediato():
 
             winsound.PlaySound(
                 "SystemAsterisk",
-                winsound.SND_ALIAS
-                |
+                winsound.SND_ALIAS |
                 winsound.SND_ASYNC
             )
 
         except Exception:
-
             pass
-
 
     threading.Thread(
         target=reproducir,

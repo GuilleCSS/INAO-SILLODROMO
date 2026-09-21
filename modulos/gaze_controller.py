@@ -6,7 +6,8 @@ from collections import deque
 
 from .mouse_action import (
     mover_cursor,
-    hacer_clic,
+    presionar_mouse,
+    soltar_mouse,
     feedback_clic_inmediato
 )
 
@@ -635,6 +636,13 @@ class GazeStateController:
         # CLIC POR BOCA
         # ====================================================
 
+        # ====================================================
+        # CONTROL DEL MOUSE POR BOCA
+        #
+        # Boca abierta  -> mouseDown
+        # Boca cerrada  -> mouseUp
+        # ====================================================
+
         apertura_boca = (
             y_57
             -
@@ -655,13 +663,50 @@ class GazeStateController:
             )
         )
 
-        cooldown = float(
-            config.get(
-                "click_cooldown",
+
+        # ====================================================
+        # BOCA CERRADA -> ABIERTA
+        # ====================================================
+
+        if (
+            not self.boca_abierta
+            and
+            apertura_boca >= umbral_abrir
+        ):
+
+            self.boca_abierta = True
+
+            # Mantener presionado el botón izquierdo
+            presionar_mouse()
+
+            # Feedback inmediato
+            feedback_clic_inmediato()
+
+            self.mostrar_temporal(
+                "PRESIONANDO",
                 0.30
             )
-        )
 
+
+        # ====================================================
+        # BOCA ABIERTA -> CERRADA
+        # ====================================================
+
+        elif (
+            self.boca_abierta
+            and
+            apertura_boca <= umbral_cerrar
+        ):
+
+            self.boca_abierta = False
+
+            # Soltar botón izquierdo
+            soltar_mouse()
+
+            self.mostrar_temporal(
+                "LIBERADO",
+                0.30
+            )
 
         # ----------------------------------------------------
         # BOCA SE ABRE
@@ -722,6 +767,15 @@ class GazeStateController:
         ):
 
             self.boca_abierta = False
+
+        # ====================================================
+        # MIENTRAS LA BOCA ESTÁ ABIERTA:
+        # NO MOVER EL CURSOR
+        # ====================================================
+
+        if self.boca_abierta:
+
+            return "PRESIONANDO"
 
 
         # ====================================================

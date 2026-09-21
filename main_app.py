@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton
 from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5 import uic
 
+
 # ============================================================
 # MEDIAPIPE
 # ============================================================
@@ -12,12 +13,14 @@ from PyQt5 import uic
 from modulos.mediapipe_reader import generador_mediapipe
 from modulos.gaze_controller import GazeStateController
 
+
 # ============================================================
 # HARDWARE Y VOZ
 # ============================================================
 
 from modulos.hardware_serial import DomoticaController
 from modulos.voice_synth import hablar_en_segundo_plano
+from modulos.mouse_action import soltar_mouse
 
 
 # ============================================================
@@ -54,7 +57,7 @@ class HiloProcesamiento(QThread):
 
         for hx, hy, au45, conf, y_51, y_57 in generador_mediapipe():
 
-            # Permite cerrar correctamente el hilo
+            # Permite solicitar el cierre del hilo.
             if self.isInterruptionRequested():
                 break
 
@@ -73,6 +76,7 @@ class HiloProcesamiento(QThread):
                     f"Estado: {estado_mirada}"
                 )
 
+
     def detener(self):
 
         self.requestInterruption()
@@ -88,14 +92,15 @@ class ControlCentral(QMainWindow):
 
         super().__init__()
 
-        # ----------------------------------------------------
+        # ====================================================
         # CARGAR INTERFAZ
-        # ----------------------------------------------------
+        # ====================================================
 
         uic.loadUi(
             "interfaz.ui",
             self
         )
+
 
         # ====================================================
         # BOTONES DE MOVIMIENTO EXISTENTES
@@ -104,24 +109,29 @@ class ControlCentral(QMainWindow):
         botones_movimiento = []
 
         if hasattr(self, "btn_avanzar"):
+
             botones_movimiento.append(
                 self.btn_avanzar
             )
 
         if hasattr(self, "btn_girar_izq"):
+
             botones_movimiento.append(
                 self.btn_girar_izq
             )
 
         if hasattr(self, "btn_girar_der"):
+
             botones_movimiento.append(
                 self.btn_girar_der
             )
 
         if hasattr(self, "btn_detener"):
+
             botones_movimiento.append(
                 self.btn_detener
             )
+
 
         # ====================================================
         # QUITAR ANTIGUO BOTÓN DE LUZ
@@ -132,8 +142,9 @@ class ControlCentral(QMainWindow):
             self.btn_luz.hide()
             self.btn_luz.deleteLater()
 
+
         # ====================================================
-        # ELIMINAR RESTRICCIONES DE TAMAÑO DE QT DESIGNER
+        # ELIMINAR RESTRICCIONES DE QT DESIGNER
         # ====================================================
 
         for btn in botones_movimiento:
@@ -152,26 +163,84 @@ class ControlCentral(QMainWindow):
                 self.centralwidget
             )
 
+
         # ====================================================
         # CONTROL SERIAL / SILLA
         # ====================================================
 
         self.domotica = DomoticaController()
 
+
         # ====================================================
-        # CONEXIÓN DE BOTONES DE MOVIMIENTO
+        # BOTONES DE MOVIMIENTO
         #
-        # Usamos funciones intermedias para:
-        # 1. mandar la señal serial
-        # 2. reproducir la voz
-        # 3. actualizar el texto de estado
+        # IMPORTANTE:
+        #
+        # pressed  = empieza el movimiento
+        # released = detener inmediatamente
+        #
+        # Esto permite que:
+        #
+        # boca abierta  -> mouseDown
+        #                -> botón pressed
+        #                -> silla se mueve
+        #
+        # boca cerrada  -> mouseUp
+        #                -> botón released
+        #                -> silla se detiene
         # ====================================================
+
+
+        # ----------------------------------------------------
+        # AVANZAR
+        # ----------------------------------------------------
 
         if hasattr(self, "btn_avanzar"):
 
-            self.btn_avanzar.clicked.connect(
+            self.btn_avanzar.pressed.connect(
                 self.ejecutar_avanzar
             )
+
+            self.btn_avanzar.released.connect(
+                self.ejecutar_detener
+            )
+
+
+        # ----------------------------------------------------
+        # GIRAR IZQUIERDA
+        # ----------------------------------------------------
+
+        if hasattr(self, "btn_girar_izq"):
+
+            self.btn_girar_izq.pressed.connect(
+                self.ejecutar_girar_izq
+            )
+
+            self.btn_girar_izq.released.connect(
+                self.ejecutar_detener
+            )
+
+
+        # ----------------------------------------------------
+        # GIRAR DERECHA
+        # ----------------------------------------------------
+
+        if hasattr(self, "btn_girar_der"):
+
+            self.btn_girar_der.pressed.connect(
+                self.ejecutar_girar_der
+            )
+
+            self.btn_girar_der.released.connect(
+                self.ejecutar_detener
+            )
+
+
+        # ----------------------------------------------------
+        # DETENER
+        #
+        # Este botón sigue funcionando mediante clic normal.
+        # ----------------------------------------------------
 
         if hasattr(self, "btn_detener"):
 
@@ -179,22 +248,11 @@ class ControlCentral(QMainWindow):
                 self.ejecutar_detener
             )
 
-        if hasattr(self, "btn_girar_izq"):
-
-            self.btn_girar_izq.clicked.connect(
-                self.ejecutar_girar_izq
-            )
-
-        if hasattr(self, "btn_girar_der"):
-
-            self.btn_girar_der.clicked.connect(
-                self.ejecutar_girar_der
-            )
 
         # ====================================================
         # DISPOSITIVOS CONTROLADOS POR ALEXA
         #
-        # ("Nombre mostrado", "Nombre pronunciado")
+        # ("Nombre visual", "Nombre pronunciado")
         # ====================================================
 
         self.dispositivos_alexa = [
@@ -230,17 +288,19 @@ class ControlCentral(QMainWindow):
             )
         ]
 
+
         # ====================================================
-        # AQUÍ SE GUARDAN LOS PARES DE BOTONES
+        # PARES DE BOTONES ALEXA
         #
         # [
-        #   (encender, apagar),
-        #   (encender, apagar),
-        #   ...
+        #     (encender, apagar),
+        #     (encender, apagar),
+        #     ...
         # ]
         # ====================================================
 
         self.botones_alexa = []
+
 
         # ====================================================
         # CREAR LOS 12 BOTONES DE ALEXA
@@ -249,7 +309,7 @@ class ControlCentral(QMainWindow):
         for nombre_visual, nombre_voz in self.dispositivos_alexa:
 
             # ------------------------------------------------
-            # BOTÓN ENCENDER
+            # ENCENDER
             # ------------------------------------------------
 
             btn_encender = QPushButton(
@@ -261,8 +321,9 @@ class ControlCentral(QMainWindow):
                 btn_encender
             )
 
+
             # ------------------------------------------------
-            # BOTÓN APAGAR
+            # APAGAR
             # ------------------------------------------------
 
             btn_apagar = QPushButton(
@@ -274,8 +335,12 @@ class ControlCentral(QMainWindow):
                 btn_apagar
             )
 
+
             # ------------------------------------------------
-            # CONECTAR BOTÓN ENCENDER
+            # ALEXA SIGUE USANDO CLIC NORMAL
+            #
+            # Aquí NO queremos mantener una acción.
+            # Queremos simplemente emitir una orden.
             # ------------------------------------------------
 
             btn_encender.clicked.connect(
@@ -288,10 +353,6 @@ class ControlCentral(QMainWindow):
                 )
             )
 
-            # ------------------------------------------------
-            # CONECTAR BOTÓN APAGAR
-            # ------------------------------------------------
-
             btn_apagar.clicked.connect(
                 lambda checked=False,
                 visual=nombre_visual,
@@ -302,9 +363,6 @@ class ControlCentral(QMainWindow):
                 )
             )
 
-            # ------------------------------------------------
-            # GUARDAR PAR DE BOTONES
-            # ------------------------------------------------
 
             self.botones_alexa.append(
                 (
@@ -312,6 +370,7 @@ class ControlCentral(QMainWindow):
                     btn_apagar
                 )
             )
+
 
         # ====================================================
         # INICIAR MEDIAPIPE
@@ -330,7 +389,10 @@ class ControlCentral(QMainWindow):
     # ESTILO BOTÓN ENCENDER
     # ========================================================
 
-    def aplicar_estilo_encender(self, boton):
+    def aplicar_estilo_encender(
+        self,
+        boton
+    ):
 
         boton.setStyleSheet("""
             QPushButton {
@@ -357,7 +419,10 @@ class ControlCentral(QMainWindow):
     # ESTILO BOTÓN APAGAR
     # ========================================================
 
-    def aplicar_estilo_apagar(self, boton):
+    def aplicar_estilo_apagar(
+        self,
+        boton
+    ):
 
         boton.setStyleSheet("""
             QPushButton {
@@ -381,10 +446,14 @@ class ControlCentral(QMainWindow):
 
 
     # ========================================================
-    # MOVIMIENTO DE LA SILLA + VOZ
+    # MOVIMIENTO DE LA SILLA
     # ========================================================
 
     def ejecutar_avanzar(self):
+
+        print(
+            "[SILLA] Orden: AVANZAR"
+        )
 
         self.domotica.avanzar()
 
@@ -397,7 +466,15 @@ class ControlCentral(QMainWindow):
         )
 
 
+    # ========================================================
+    # DETENER SILLA
+    # ========================================================
+
     def ejecutar_detener(self):
+
+        print(
+            "[SILLA] Orden: DETENER"
+        )
 
         self.domotica.detener()
 
@@ -410,7 +487,15 @@ class ControlCentral(QMainWindow):
         )
 
 
+    # ========================================================
+    # GIRAR IZQUIERDA
+    # ========================================================
+
     def ejecutar_girar_izq(self):
+
+        print(
+            "[SILLA] Orden: IZQUIERDA"
+        )
 
         self.domotica.girar_izquierda()
 
@@ -423,7 +508,15 @@ class ControlCentral(QMainWindow):
         )
 
 
+    # ========================================================
+    # GIRAR DERECHA
+    # ========================================================
+
     def ejecutar_girar_der(self):
+
+        print(
+            "[SILLA] Orden: DERECHA"
+        )
 
         self.domotica.girar_derecha()
 
@@ -504,9 +597,14 @@ class ControlCentral(QMainWindow):
     # CONTROL DE TAMAÑO Y POSICIONES
     # ========================================================
 
-    def resizeEvent(self, event):
+    def resizeEvent(
+        self,
+        event
+    ):
 
-        super().resizeEvent(event)
+        super().resizeEvent(
+            event
+        )
 
         w = self.width()
         h = self.height()
@@ -514,11 +612,15 @@ class ControlCentral(QMainWindow):
         if w <= 0 or h <= 0:
             return
 
-        # ----------------------------------------------------
-        # DIVIDIMOS LA PANTALLA EN TRES SECCIONES
-        # ----------------------------------------------------
 
-        h_tercio = h // 3
+        # ====================================================
+        # DIVIDIR PANTALLA EN TRES SECCIONES
+        # ====================================================
+
+        h_tercio = (
+            h // 3
+        )
+
 
         # ====================================================
         # AVANZAR
@@ -536,6 +638,7 @@ class ControlCentral(QMainWindow):
                 h_tercio
             )
 
+
         # ====================================================
         # IZQUIERDA
         # ====================================================
@@ -551,6 +654,7 @@ class ControlCentral(QMainWindow):
                 w // 2,
                 h_tercio
             )
+
 
         # ====================================================
         # DERECHA
@@ -568,6 +672,7 @@ class ControlCentral(QMainWindow):
                 h_tercio
             )
 
+
         # ====================================================
         # BOTÓN DETENER
         # ====================================================
@@ -578,7 +683,9 @@ class ControlCentral(QMainWindow):
         ):
 
             size = int(
-                min(w, h) * 0.45
+                min(w, h)
+                *
+                0.45
             )
 
             self.btn_detener.setGeometry(
@@ -614,36 +721,47 @@ class ControlCentral(QMainWindow):
 
             self.btn_detener.raise_()
 
+
         # ====================================================
         # PANEL INFERIOR DE ALEXA
         # ====================================================
 
         y_base = (
-            h_tercio * 2
+            h_tercio
+            *
+            2
         )
 
         alto_panel = (
-            h - y_base
+            h
+            -
+            y_base
         )
 
+
         # ----------------------------------------------------
-        # 3 dispositivos por fila
-        # 2 filas
+        # 3 DISPOSITIVOS POR FILA
+        # 2 FILAS
         # ----------------------------------------------------
 
         columnas = 3
         filas = 2
 
         ancho_dispositivo = (
-            w // columnas
+            w
+            //
+            columnas
         )
 
         alto_dispositivo = (
-            alto_panel // filas
+            alto_panel
+            //
+            filas
         )
 
+
         # ====================================================
-        # POSICIONAR LOS SEIS DISPOSITIVOS
+        # POSICIONAR LOS 6 DISPOSITIVOS
         # ====================================================
 
         for i, (
@@ -654,15 +772,20 @@ class ControlCentral(QMainWindow):
         ):
 
             fila = (
-                i // columnas
+                i
+                //
+                columnas
             )
 
             columna = (
-                i % columnas
+                i
+                %
+                columnas
             )
 
+
             # ------------------------------------------------
-            # POSICIÓN DEL DISPOSITIVO
+            # POSICIÓN DEL BLOQUE
             # ------------------------------------------------
 
             x = (
@@ -679,14 +802,17 @@ class ControlCentral(QMainWindow):
                 alto_dispositivo
             )
 
+
             # ------------------------------------------------
-            # AJUSTAR ANCHO DE LA ÚLTIMA COLUMNA
+            # AJUSTAR ÚLTIMA COLUMNA
             # ------------------------------------------------
 
             if columna == columnas - 1:
 
                 ancho_actual = (
-                    w - x
+                    w
+                    -
+                    x
                 )
 
             else:
@@ -695,13 +821,17 @@ class ControlCentral(QMainWindow):
                     ancho_dispositivo
                 )
 
+
             # ------------------------------------------------
-            # DIVIDIR EL BLOQUE EN ENCENDER / APAGAR
+            # DIVIDIR EN ENCENDER / APAGAR
             # ------------------------------------------------
 
             mitad = (
-                ancho_actual // 2
+                ancho_actual
+                //
+                2
             )
+
 
             # ------------------------------------------------
             # ENCENDER
@@ -714,6 +844,7 @@ class ControlCentral(QMainWindow):
                 alto_dispositivo
             )
 
+
             # ------------------------------------------------
             # APAGAR
             # ------------------------------------------------
@@ -725,8 +856,10 @@ class ControlCentral(QMainWindow):
                 alto_dispositivo
             )
 
+
             btn_encender.raise_()
             btn_apagar.raise_()
+
 
         # ====================================================
         # TEXTO DE ESTADO
@@ -760,13 +893,83 @@ class ControlCentral(QMainWindow):
 
 
     # ========================================================
-    # CERRAR APLICACIÓN
+    # CERRAR APLICACIÓN DE FORMA SEGURA
     # ========================================================
 
     def closeEvent(
         self,
         event
     ):
+
+        print(
+            "[SISTEMA] Cerrando aplicación..."
+        )
+
+
+        # ====================================================
+        # 1. SOLTAR BOTÓN DEL MOUSE
+        #
+        # Evita dejar Windows con mouseDown activo.
+        # ====================================================
+
+        try:
+
+            soltar_mouse()
+
+        except Exception as e:
+
+            print(
+                f"[SISTEMA] Error liberando mouse: {e}"
+            )
+
+
+        # ====================================================
+        # 2. DETENER FÍSICAMENTE LA SILLA
+        # ====================================================
+
+        if hasattr(
+            self,
+            "domotica"
+        ):
+
+            try:
+
+                self.domotica.detener()
+
+                print(
+                    "[SILLA] Posición neutral enviada."
+                )
+
+            except Exception as e:
+
+                print(
+                    f"[SILLA] Error al detener: {e}"
+                )
+
+
+        # ====================================================
+        # 3. CERRAR PUERTO SERIAL
+        # ====================================================
+
+        if hasattr(
+            self,
+            "domotica"
+        ):
+
+            try:
+
+                self.domotica.cerrar_conexion()
+
+            except Exception as e:
+
+                print(
+                    f"[SILLA] Error cerrando conexión: {e}"
+                )
+
+
+        # ====================================================
+        # 4. DETENER MEDIAPIPE
+        # ====================================================
 
         if hasattr(
             self,
@@ -778,6 +981,11 @@ class ControlCentral(QMainWindow):
             self.hilo.wait(
                 1000
             )
+
+
+        print(
+            "[SISTEMA] Aplicación cerrada correctamente."
+        )
 
         event.accept()
 

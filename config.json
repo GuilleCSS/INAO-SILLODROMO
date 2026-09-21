@@ -70,5 +70,11 @@
     "click_feedback_seconds": 0.45,
 
     "mp_debug_overlay": true,
-    "mp_show_camera": true
+    "mp_show_camera": true,
+
+    "serial_port": "COM4",
+    "serial_baud_rate": 9600,
+    "serial_neutral": 128,
+    "serial_step": 15,
+    "serial_movement_multiplier": 8
 }

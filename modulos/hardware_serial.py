@@ -1,33 +1,75 @@
-import serial
-import time
+from movement import ControladorArduino
+
+
+# ============================================================
+# CONTROL DE LA SILLA
+# ============================================================
 
 class DomoticaController:
-    def __init__(self, puerto='COM3', baudrate=9600):
-        try:
-            self.arduino = serial.Serial(puerto, baudrate, timeout=1)
-            time.sleep(2) 
-        except serial.SerialException:
-            self.arduino = None
-            print("Advertencia: Entorno domótico no conectado.")
 
-    def enviar_comando(self, comando):
-        if self.arduino:
-            self.arduino.write(comando.encode('utf-8'))
-            print(f"Comando enviado: {comando}")
-        else:
-            print(f"[Simulación Serial] Comando: {comando}")
+    def __init__(self):
 
-    def encender_luz(self):
-        self.enviar_comando('L')
+        self.silla = ControladorArduino()
+
+
+    # ========================================================
+    # MOVIMIENTO
+    # ========================================================
 
     def avanzar(self):
-        self.enviar_comando('W')
 
-    def detener(self):
-        self.enviar_comando('S')
+        print(
+            "[DOMOTICA] Avanzar"
+        )
+
+        return self.silla.avanzar()
+
+
+    def retroceder(self):
+
+        print(
+            "[DOMOTICA] Retroceder"
+        )
+
+        return self.silla.retroceder()
+
 
     def girar_izquierda(self):
-        self.enviar_comando('A')
+
+        print(
+            "[DOMOTICA] Girar izquierda"
+        )
+
+        return self.silla.girar_izquierda()
+
 
     def girar_derecha(self):
-        self.enviar_comando('D')
+
+        print(
+            "[DOMOTICA] Girar derecha"
+        )
+
+        return self.silla.girar_derecha()
+
+
+    def detener(self):
+
+        print(
+            "[DOMOTICA] Detener"
+        )
+
+        return self.silla.detener()
+
+
+    # ========================================================
+    # CERRAR
+    # ========================================================
+
+    def cerrar_conexion(self):
+
+        if hasattr(
+            self,
+            "silla"
+        ):
+
+            self.silla.cerrar_conexion()
