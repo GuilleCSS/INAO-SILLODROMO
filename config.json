@@ -1,14 +1,74 @@
 {
     "openface_bin": "C:/OpenFace/OpenFace_2.2.0_win_x64/OpenFace_2.2.0_win_x64/FeatureExtraction.exe",
     "output_dir": "./temp_openface",
+
     "cam_width": "1280",
     "cam_height": "720",
     "camera_index": 0,
+
     "x_threshold": 0.06,
     "y_threshold": 0.05,
     "conf_min": 0.70,
+
     "blink_hold_time": 3.5,
+
     "mouse_speed": 5,
     "suavizado_alpha": 0.2,
-    "boca_threshold": 38.0
+
+    "boca_threshold": 38.0,
+
+    "mp_detection_confidence": 0.60,
+    "mp_tracking_confidence": 0.60,
+
+    "camera_width": 640,
+    "camera_height": 480,
+    "camera_fps": 30,
+
+    "mp_yaw_normalization_deg": 35.0,
+
+    "mp_vertical_scale": 4.0,
+
+    "mp_invert_x": true,
+    "mp_invert_y": false,
+
+    "mp_eye_closed_threshold": 0.20,
+
+    "mp_mouth_open_threshold": 22.0,
+    "mp_mouth_close_threshold": 15.0,
+
+    "cursor_calibration_frames": 30,
+
+    "cursor_median_window": 5,
+
+    "cursor_alpha_quiet": 0.10,
+    "cursor_alpha_fast": 0.45,
+    "cursor_motion_scale": 0.12,
+
+    "cursor_deadzone_x_on": 0.16,
+    "cursor_deadzone_x_off": 0.10,
+
+    "cursor_deadzone_y_on": 0.12,
+    "cursor_deadzone_y_off": 0.07,
+
+    "cursor_left_gain": 1.0,
+    "cursor_right_gain": 1.0,
+
+    "cursor_up_gain": 1.0,
+    "cursor_down_gain": 1.0,
+
+    "cursor_center_adapt_zone": 0.06,
+    "cursor_center_adapt_alpha": 0.0025,
+
+    "cursor_min_speed": 45.0,
+    "cursor_max_speed": 950.0,
+
+    "cursor_max_input": 0.90,
+    "cursor_curve_gamma": 1.75,
+
+    "click_cooldown": 0.30,
+    "click_freeze": 0.18,
+    "click_feedback_seconds": 0.45,
+
+    "mp_debug_overlay": true,
+    "mp_show_camera": true
 }
