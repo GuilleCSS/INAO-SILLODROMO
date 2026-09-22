@@ -159,6 +159,10 @@ class GazeStateController:
         # mal y recuperarse solo (ver _recuperar_centro).
         self._hist_pos = deque()
 
+        # Pausa tras cada paso: da tiempo a que la cabeza regrese al centro
+        # antes de volver a evaluar gestos. No-None significa "en pausa".
+        self._tiempo_ultimo_paso = None
+
         # Desviación actual respecto al centro, en fracción del umbral
         # (±1 = justo en el umbral). Es lo que dibuja el indicador de cabeza.
         self._frac_x = 0.0

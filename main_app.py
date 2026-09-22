@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import time
+import traceback
 
 # Trabajar siempre desde la carpeta del proyecto (config.json, interfaz.ui, modulos/)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -86,6 +87,11 @@ class HiloProcesamiento(QThread):
                     self.senal_estado.emit(estado)
                 self._emitir_frame(frame)
         except Exception as e:
+            # El traceback completo a consola: si el hilo de visión muere, la
+            # cámara se libera (se ve como que "se prende y se apaga") y el
+            # mensaje de la barra de estado puede quedar tapado por un
+            # diálogo en pantalla completa. Sin esto el fallo es invisible.
+            traceback.print_exc()
             self.senal_mensaje.emit(f"Error en visión: {e}")
 
     def _emitir_frame(self, frame_bgr):
