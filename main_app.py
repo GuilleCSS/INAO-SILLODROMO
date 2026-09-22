@@ -68,6 +68,7 @@ class HiloProcesamiento(QThread):
         super().__init__()
         self.controller = None
         self._activo = True
+        self._ultimo_envio_frame = 0.0
 
     def run(self):
         try:
@@ -87,6 +88,26 @@ class HiloProcesamiento(QThread):
             self.senal_mensaje.emit(f"Error en visión: {e}")
 
     def _emitir_frame(self, frame_bgr):
+        """
+        La vista previa se manda con freno de mano a propósito. Mandar un
+        QImage de 1280x720 (≈2.7 MB por copia) 30 veces por segundo satura
+        la cola de eventos de Qt: si la interfaz no alcanza a consumirlos,
+        se acumulan sin límite y todo se siente trabado. El control sí va a
+        toda velocidad (senal_estado), pero el panel de cámara no necesita
+        más de ~15 fps ni resolución completa para verse bien.
+        """
+        ahora = time.time()
+        intervalo = 1.0 / max(1, int(config.get("vista_fps", 15)))
+        if (ahora - self._ultimo_envio_frame) < intervalo:
+            return
+        self._ultimo_envio_frame = ahora
+
+        ancho_vista = int(config.get("vista_ancho", 640))
+        alto, ancho = frame_bgr.shape[:2]
+        if ancho_vista and ancho > ancho_vista:
+            escala = ancho_vista / float(ancho)
+            frame_bgr = cv2.resize(frame_bgr, (ancho_vista, int(alto * escala)))
+
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         alto, ancho, _ = rgb.shape
         imagen = QImage(rgb.data, ancho, alto, 3 * ancho, QImage.Format_RGB888).copy()

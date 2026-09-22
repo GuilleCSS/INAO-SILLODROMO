@@ -210,30 +210,48 @@ class TileButton(QPushButton):
         p.drawRoundedRect(r, radio, radio)
 
         if w > h * 1.8:
-            # ---- horizontal: icono a la izquierda ----
+            # ---- horizontal: icono + texto, el bloque completo centrado ----
+            # (antes el icono quedaba pegado a la izquierda con el texto
+            # extendiéndose a la derecha; en botones muy anchos como Avanzar/
+            # Regresar eso se veía corrido hacia la orilla. Ahora se mide el
+            # texto real y se centra el grupo icono+texto como una unidad.)
             s = h * 0.5
-            centro = QPointF(r.left() + h * 0.18 + s / 2, r.center().y())
+            gap = h * 0.14
+            ancho_max_texto = max(10.0, w - s - h * 0.5)
+
+            f = fuente_ajustada(titulo, h * 0.26, ancho_max_texto)
+            alto_t = QFontMetrics(f).height()
+            ancho_titulo = QFontMetrics(f).horizontalAdvance(titulo)
+
+            if subtitulo:
+                fs = fuente_ajustada(subtitulo, h * 0.15, ancho_max_texto, QFont.Normal)
+                alto_s = QFontMetrics(fs).height()
+                ancho_texto = max(ancho_titulo, QFontMetrics(fs).horizontalAdvance(subtitulo))
+            else:
+                ancho_texto = ancho_titulo
+
+            ancho_grupo = s + gap + ancho_texto
+            x_inicio = r.center().x() - ancho_grupo / 2
+            centro = QPointF(x_inicio + s / 2, r.center().y())
+
             self._badge(p, centro, s, acento, activo)
             if icono:
                 dibujar_icono(p, icono, centro, s * 0.55, color_icono)
-            x_txt = centro.x() + s / 2 + h * 0.14
-            ancho = r.right() - x_txt - h * 0.1
-            f = fuente_ajustada(titulo, h * 0.26, ancho)
-            alto_t = QFontMetrics(f).height()
+
+            x_txt = centro.x() + s / 2 + gap
+            caja_texto = ancho_texto + 4
             if subtitulo:
-                fs = fuente_ajustada(subtitulo, h * 0.15, ancho, QFont.Normal)
-                alto_s = QFontMetrics(fs).height()
                 y0 = r.center().y() - (alto_t + alto_s) / 2
                 p.setFont(f)
                 p.setPen(color_fg)
-                p.drawText(QRectF(x_txt, y0, ancho, alto_t), Qt.AlignLeft | Qt.AlignVCenter, titulo)
+                p.drawText(QRectF(x_txt, y0, caja_texto, alto_t), Qt.AlignLeft | Qt.AlignVCenter, titulo)
                 p.setFont(fs)
                 p.setPen(color_sub)
-                p.drawText(QRectF(x_txt, y0 + alto_t, ancho, alto_s), Qt.AlignLeft | Qt.AlignVCenter, subtitulo)
+                p.drawText(QRectF(x_txt, y0 + alto_t, caja_texto, alto_s), Qt.AlignLeft | Qt.AlignVCenter, subtitulo)
             else:
                 p.setFont(f)
                 p.setPen(color_fg)
-                p.drawText(QRectF(x_txt, r.top(), ancho, h), Qt.AlignLeft | Qt.AlignVCenter, titulo)
+                p.drawText(QRectF(x_txt, r.top(), caja_texto, h), Qt.AlignLeft | Qt.AlignVCenter, titulo)
         else:
             # ---- vertical: icono arriba ----
             con_sub = bool(subtitulo) and h > 120
@@ -301,6 +319,11 @@ class VistaCamara(QWidget):
         self.espejo = bool(config.get("camara_espejo", True))
         self.cw = float(config.get("cam_width", 1280))
         self.ch = float(config.get("cam_height", 720))
+        # Con video en vivo, por defecto se ve la cara limpia (sin la malla
+        # de 68 puntos encima), que es más útil para verificar a simple vista
+        # cómo se está moviendo la cabeza. Sin video, la malla se dibuja
+        # igual: ahí es lo único que muestra que el rastreo va funcionando.
+        self.mostrar_malla = bool(config.get("mostrar_malla", False))
 
     # ---------------- API ----------------
 
@@ -377,8 +400,15 @@ class VistaCamara(QWidget):
         else:
             self._rejilla(p, area)
 
-        if self.rostro and len(self.puntos) >= 68:
-            self._malla(p, area, solo=self.imagen is None)
+        hay_rostro = self.rostro and len(self.puntos) >= 68
+        if self.imagen is not None:
+            # Hay video: se ve la cara tal cual. La malla solo se superpone
+            # si se pide explícitamente, y no se tapa la cara con mensajes
+            # (el chip del encabezado ya avisa si no se detecta el rostro).
+            if hay_rostro and self.mostrar_malla:
+                self._malla(p, area, solo=False)
+        elif hay_rostro:
+            self._malla(p, area, solo=True)
         elif self.modo != "iniciando":
             self._mensaje_centro(p, area, "Buscando rostro…",
                                  "Colócate frente a la cámara")

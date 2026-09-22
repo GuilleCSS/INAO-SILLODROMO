@@ -1,5 +1,6 @@
 import time
 import json
+from collections import deque
 from .mouse_action import mover_cursor_absoluto, presionar_clic, soltar_clic
 from .voice_synth import hablar_en_segundo_plano
 
@@ -110,13 +111,32 @@ class GazeStateController:
         # según la distancia a la cámara, el tamaño de cara, etc., así que
         # los umbrales de clic se calculan como un margen POR ENCIMA de esta
         # base, no como valores absolutos.
+        #
+        # Se estima como un percentil BAJO de una ventana larga de lecturas
+        # recientes, y se actualiza SIEMPRE (esté o no presionado el clic).
+        # Antes se fijaba con un solo frame y solo se refrescaba mientras el
+        # clic estaba suelto: si ese primer frame venía con ruido, o si el
+        # clic se enganchaba por error, la base nunca se corregía y la boca
+        # quedaba detectada como abierta de forma permanente. Con la ventana
+        # larga, un rato de boca genuinamente abierta (p. ej. avanzar) no
+        # alcanza a mover el percentil, pero una detección trabada sí se
+        # corrige sola en cuanto la ventana se llena de valores de reposo.
+        ventana_seg = config.get("boca_base_ventana_seg", 30.0)
+        self._aperturas = deque(maxlen=max(30, int(ventana_seg * 30)))
         self._apertura_base = None
+        self._frames_desde_base = 0
 
         # Navegación por saltos
         self._nodos = {}                       # nodo -> (x, y) en pantalla
         self._etiquetas_nodos = dict(ETIQUETAS_FOCO_BASE)
         self._foco = FOCO_INICIAL
-        self._zona_anterior = "centro"
+        # Un rastreador de zona POR EJE (no uno solo compartido): así, si el
+        # gesto cruza el umbral de X y de Y en el mismo instante (un
+        # movimiento en diagonal), se detectan los dos por separado y se
+        # aplican ambos pasos seguidos — más rápido que tener que hacer el
+        # gesto horizontal y el vertical uno a la vez.
+        self._zona_anterior_x = "centro"       # "izquierda" | "derecha" | "centro"
+        self._zona_anterior_y = "centro"       # "arriba" | "abajo" | "centro"
 
         # "Centro" de referencia para los gestos, auto-ajustado (no requiere
         # ningún paso de calibración): arranca igual que hx_suavizado/
@@ -156,7 +176,8 @@ class GazeStateController:
         regresa el foco a Avanzar. Útil si los gestos empiezan a sentirse
         desalineados (la persona se acomodó, se cansó, etc.)."""
         self._centro_x, self._centro_y = self.hx_suavizado, self.hy_suavizado
-        self._zona_anterior = "centro"
+        self._zona_anterior_x = "centro"
+        self._zona_anterior_y = "centro"
         self._foco = FOCO_INICIAL
         self._tiempo_ultimo_paso = None
         self._teleportar_cursor()
@@ -179,9 +200,27 @@ class GazeStateController:
         self._frames_abierta = 0
         self._frames_cerrada = 0
 
+    def _refrescar_apertura_base(self, apertura):
+        """Recalcula la base de "boca cerrada" como un percentil bajo de las
+        lecturas recientes. La boca pasa cerrada la mayor parte del tiempo,
+        así que ese percentil bajo ES el reposo real — y se recalcula
+        siempre, lo que permite que una detección trabada se destrabe sola."""
+        self._aperturas.append(apertura)
+
+        # Recalcular cada ciertos frames (no en cada uno): ordenar la ventana
+        # completa 30 veces por segundo no aporta nada y solo gasta CPU.
+        self._frames_desde_base += 1
+        if self._apertura_base is not None and self._frames_desde_base < 10:
+            return
+        self._frames_desde_base = 0
+
+        muestras = sorted(self._aperturas)
+        percentil = config.get("boca_base_percentil", 10) / 100.0
+        idx = min(len(muestras) - 1, int(len(muestras) * percentil))
+        self._apertura_base = muestras[idx]
+
     def _actualizar_boca(self, apertura):
-        if self._apertura_base is None:
-            self._apertura_base = apertura
+        self._refrescar_apertura_base(apertura)
 
         # Umbrales como margen por encima de la boca cerrada real de esta
         # persona (auto-ajustada), no números absolutos que rara vez
@@ -193,12 +232,6 @@ class GazeStateController:
         frames_req = int(config.get("boca_frames", 2))
 
         if not self.clic_mantenido:
-            # Solo se adapta la base mientras la boca está claramente cerrada
-            # (bien por debajo del umbral de soltar) — sigue el reposo real
-            # sin "perseguir" una boca que ya se está empezando a abrir.
-            if apertura < umbral_off:
-                alpha_base = config.get("boca_base_alpha", 0.02)
-                self._apertura_base += alpha_base * (apertura - self._apertura_base)
             self._frames_abierta = self._frames_abierta + 1 if apertura > umbral_on else 0
             if self._frames_abierta >= frames_req:
                 self._presionar()
@@ -331,33 +364,43 @@ class GazeStateController:
             "abajo": config.get("navegacion_umbral_abajo", yt),
         }
 
-    def _zona_actual(self, dx, dy, umbrales):
+    def _zona_eje(self, delta, umbral_neg, umbral_pos, nombre_neg, nombre_pos, zona_anterior):
         """
-        En qué dirección está apuntando la cabeza AHORA respecto al centro
-        de referencia, como fracción del umbral de ESA dirección (0 = en el
-        centro, 1 = ya cruzó el umbral). Usa histéresis: una vez que cuenta
-        como "hacia la izquierda" (p. ej.), sigue contando como tal hasta que
-        la cabeza vuelve bastante cerca del centro — así no dispara un
-        segundo paso por quedarse justo en el borde del umbral.
+        Versión de un solo eje (X o Y) de la detección de gesto: en qué
+        sentido está apuntando la cabeza AHORA respecto al centro, como
+        fracción del umbral de ESE sentido (0 = en el centro, 1 = ya cruzó
+        el umbral). Histéresis: una vez que cuenta como "hacia nombre_neg"
+        (p. ej. izquierda), sigue contando como tal hasta que la cabeza
+        vuelve bastante cerca del centro — así no dispara un segundo paso
+        por quedarse justo en el borde del umbral.
         """
-        fracciones = {
-            "izquierda": max(0.0, -dx / umbrales["izquierda"]),
-            "derecha": max(0.0, dx / umbrales["derecha"]),
-            "arriba": max(0.0, -dy / umbrales["arriba"]),
-            "abajo": max(0.0, dy / umbrales["abajo"]),
-        }
-
+        frac_neg = max(0.0, -delta / umbral_neg)
+        frac_pos = max(0.0, delta / umbral_pos)
         umbral_entrada = config.get("navegacion_histeresis", 0.55)
-        if self._zona_anterior != "centro" and fracciones.get(self._zona_anterior, 0.0) >= umbral_entrada:
-            return self._zona_anterior
 
-        direccion, fraccion = max(fracciones.items(), key=lambda kv: kv[1])
-        return direccion if fraccion >= 1.0 else "centro"
+        if zona_anterior == nombre_neg and frac_neg >= umbral_entrada:
+            return nombre_neg
+        if zona_anterior == nombre_pos and frac_pos >= umbral_entrada:
+            return nombre_pos
+
+        if frac_neg >= 1.0:
+            return nombre_neg
+        if frac_pos >= 1.0:
+            return nombre_pos
+        return "centro"
+
+    def _margenes(self, dx, dy, umbrales):
+        """Margen de "ya regresó al centro", medido contra el umbral del lado
+        hacia el que la cabeza está desviada AHORA (no contra el menor de los
+        dos): con umbrales asimétricos —p. ej. izquierda más sensible que
+        derecha— usar el menor para ambos lados volvería innecesariamente
+        estricto el regreso desde el lado de umbral grande."""
+        umbral_x = umbrales["izquierda"] if dx < 0 else umbrales["derecha"]
+        umbral_y = umbrales["arriba"] if dy < 0 else umbrales["abajo"]
+        return umbral_x * 0.6, umbral_y * 0.6
 
     def _actualizar_navegacion(self, hx, hy, current_time):
         umbrales = self._umbrales()
-        margen_x = min(umbrales["izquierda"], umbrales["derecha"]) * 0.6
-        margen_y = min(umbrales["arriba"], umbrales["abajo"]) * 0.6
 
         # Pausa tras cada paso: `navegacion_pausa_seg` es un MÍNIMO, no un
         # reloj fijo. Cumplido ese mínimo, solo se recentra cuando la cabeza
@@ -371,29 +414,47 @@ class GazeStateController:
             dy_anterior = hy - self._centro_y
             if transcurrido < config.get("navegacion_pausa_seg", 0.5):
                 return
+            margen_x, margen_y = self._margenes(dx_anterior, dy_anterior, umbrales)
             if abs(dx_anterior) >= margen_x or abs(dy_anterior) >= margen_y:
                 return  # ya pasó el mínimo, pero la cabeza aún no volvió: seguir esperando
             self._centro_x, self._centro_y = hx, hy
-            self._zona_anterior = "centro"
+            self._zona_anterior_x = "centro"
+            self._zona_anterior_y = "centro"
             self._tiempo_ultimo_paso = None
 
         dx = hx - self._centro_x
         dy = hy - self._centro_y
 
         # El centro se auto-ajusta lentamente, pero SOLO mientras la cabeza
-        # ya está en reposo (no en medio de un gesto) — así sigue la postura
-        # neutral real de la persona sin pedir calibración, y sin "perseguir"
-        # un gesto en curso y evitar que cruce el umbral.
-        if self._zona_anterior == "centro" and abs(dx) < margen_x and abs(dy) < margen_y:
+        # ya está en reposo en LOS DOS ejes (no en medio de un gesto) — así
+        # sigue la postura neutral real de la persona sin pedir calibración,
+        # y sin "perseguir" un gesto en curso y evitar que cruce el umbral.
+        en_reposo = self._zona_anterior_x == "centro" and self._zona_anterior_y == "centro"
+        margen_x, margen_y = self._margenes(dx, dy, umbrales)
+        if en_reposo and abs(dx) < margen_x and abs(dy) < margen_y:
             alpha_centro = config.get("navegacion_centro_alpha", 0.01)
             self._centro_x += alpha_centro * (hx - self._centro_x)
             self._centro_y += alpha_centro * (hy - self._centro_y)
 
-        zona = self._zona_actual(dx, dy, umbrales)
-        if zona != "centro" and self._zona_anterior == "centro":
-            self._mover_foco(zona)
+        zona_x = self._zona_eje(dx, umbrales["izquierda"], umbrales["derecha"], "izquierda", "derecha", self._zona_anterior_x)
+        zona_y = self._zona_eje(dy, umbrales["arriba"], umbrales["abajo"], "arriba", "abajo", self._zona_anterior_y)
+
+        disparo_x = zona_x != "centro" and self._zona_anterior_x == "centro"
+        disparo_y = zona_y != "centro" and self._zona_anterior_y == "centro"
+
+        if disparo_x or disparo_y:
+            # Si los dos ejes cruzan el umbral en el mismo instante (gesto en
+            # diagonal, p. ej. arriba-derecha a la vez), se aplican los dos
+            # pasos seguidos en vez de solo uno — así un movimiento diagonal
+            # avanza el doble de rápido que hacer cada gesto por separado.
+            if disparo_x:
+                self._mover_foco(zona_x)
+            if disparo_y:
+                self._mover_foco(zona_y)
             self._tiempo_ultimo_paso = current_time
-        self._zona_anterior = zona
+
+        self._zona_anterior_x = zona_x
+        self._zona_anterior_y = zona_y
 
     def _mover_foco(self, direccion):
         vecino = GRAFO_NAVEGACION.get(self._foco, {}).get(direccion)
