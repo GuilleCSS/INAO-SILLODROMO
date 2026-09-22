@@ -31,8 +31,8 @@
     "serial_port": "COM5",
     "serial_baudrate": 9600,
     "airwheel_neutro": 128,
-    "airwheel_delta_avance": 60,
-    "airwheel_delta_giro": 40,
+    "airwheel_delta_avance": 100,
+    "airwheel_delta_giro": 60,
     "x_threshold": 0.06,
     "y_threshold": 0.05,
     "conf_min": 0.7,
@@ -72,5 +72,7 @@
     "calib_umbral_minimo": 0.12,
     "calib_umbral_veces_ruido": 3.0,
     "navegacion_holgura_ruido": 1.6,
-    "clic_ojos_gracia_seg": 0.6
+    "clic_ojos_gracia_seg": 0.6,
+    "escena_alpha_bajada": 0.25,
+    "escena_alpha_subida": 0.05
 }

@@ -10,9 +10,11 @@ cámara). Eso permite tres cosas que con un proceso aparte eran imposibles:
      de detección, no son solo cosméticos).
   3. Ajustar la cámara (exposición, brillo) porque somos sus dueños.
 
-Al arrancar se hace un "reconocimiento de escenario": se miden unos frames
-para ver qué tan oscura/plana está la imagen, y con eso se decide cuánto
-filtro aplicar el resto de la sesión (ver `analizar_escenario`).
+El brillo y el contraste de la escena se miden en CADA frame y los filtros
+se ajustan sobre la marcha (ver `MejoradorImagen`). Tiene que ser así porque
+la cámara va montada en una silla que se mueve por la casa: la iluminación
+cambia todo el tiempo, y un ajuste fijo calculado al arrancar deja de servir
+en cuanto se cambia de cuarto.
 
 generador_mediapipe() yield-ea (frame, hx, hy, au45_c, conf, y_51, y_57):
 el mismo contrato de datos que espera GazeStateController.process_frame(),
@@ -220,55 +222,85 @@ class MejoradorImagen:
         self.listo = False
         self.gamma = 1.0
         self.usar_clahe = False
+        self.brillo = None
+        self.contraste = None
         self._tabla_gamma = None
-        self._clahe = None
-        self._muestras = []
+        self._gamma_en_tabla = None
+        self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        self._frames = 0
         self.resumen = "Analizando escenario…"
 
-    def analizar(self, frame):
-        """Acumula frames hasta tener suficientes para decidir los filtros."""
-        gris = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        self._muestras.append((float(gris.mean()), float(gris.std())))
+    @staticmethod
+    def _medir(frame):
+        """Brillo y contraste de la escena. Se submuestrea 1 de cada 8 píxeles
+        por eje: para una media y una desviación es más que suficiente, y sale
+        unas 60 veces más barato que recorrer el frame completo cada vez."""
+        gris = cv2.cvtColor(frame[::8, ::8], cv2.COLOR_BGR2GRAY)
+        return float(gris.mean()), float(gris.std())
 
-        if len(self._muestras) < int(config.get("escena_frames", 30)):
-            return
+    def actualizar(self, frame):
+        """
+        Vuelve a medir en CADA frame y ajusta los filtros sobre la marcha.
 
-        brillo = sum(m[0] for m in self._muestras) / len(self._muestras)
-        contraste = sum(m[1] for m in self._muestras) / len(self._muestras)
+        Antes se medía una sola vez al arrancar y el gamma quedaba congelado
+        toda la sesión. Eso servía para alguien sentado frente a un
+        escritorio, pero esto es una silla que se mueve por la casa: al pasar
+        de una sala iluminada a un pasillo oscuro, el gamma calculado para la
+        sala dejaba de servir y encima empeoraba la imagen, justo cuando la
+        cámara ya estaba oscureciendo por su cuenta.
+        """
+        brillo, contraste = self._medir(frame)
 
-        # Gamma < 1 aclara. Se apunta a un brillo medio cómodo (~120 de 255)
-        # y se limita el rango para no destruir la imagen si la medición
-        # sale rara (p. ej. alguien tapó la cámara durante el análisis).
+        if self.brillo is None:
+            self.brillo, self.contraste = brillo, contraste
+        else:
+            # Adaptación ASIMÉTRICA a propósito: se reacciona rápido cuando la
+            # imagen se oscurece (hay que recuperar la cara cuanto antes) y
+            # despacio cuando se aclara, para no perseguir un reflejo o un
+            # fogonazo pasajero. Seguir cada oscilación de la auto-exposición
+            # de la cámara solo añadiría más parpadeo.
+            sube = brillo > self.brillo
+            alpha = config.get("escena_alpha_subida", 0.05) if sube else \
+                    config.get("escena_alpha_bajada", 0.25)
+            self.brillo += alpha * (brillo - self.brillo)
+            self.contraste += alpha * (contraste - self.contraste)
+
         objetivo = float(config.get("escena_brillo_objetivo", 120.0))
-        if brillo < 5.0:
+        if self.brillo < 5.0:
             self.gamma = 1.0  # prácticamente a oscuras: no hay nada que rescatar
         else:
-            self.gamma = max(0.45, min(1.6, math.log(objetivo / 255.0) / math.log(brillo / 255.0)))
+            self.gamma = max(0.45, min(1.6,
+                math.log(objetivo / 255.0) / math.log(self.brillo / 255.0)))
 
-        # CLAHE solo si la imagen está "plana" (poco contraste): recupera los
-        # bordes de ojos y boca sin quemar el resto.
-        self.usar_clahe = contraste < float(config.get("escena_contraste_min", 45.0))
+        # Histéresis: se enciende por debajo del umbral y no se apaga hasta
+        # bastante por encima. Sin esto, con el contraste oscilando justo en
+        # el límite, el filtro entraría y saldría solo y la imagen parpadearía.
+        umbral_clahe = float(config.get("escena_contraste_min", 40.0))
+        if self.usar_clahe:
+            self.usar_clahe = self.contraste < umbral_clahe * 1.20
+        else:
+            self.usar_clahe = self.contraste < umbral_clahe
 
-        if abs(self.gamma - 1.0) > 0.03:
+        # La tabla solo se rehace cuando el gamma cambió de verdad: generarla
+        # en cada frame sería gasto puro.
+        if abs(self.gamma - 1.0) <= 0.03:
+            self._tabla_gamma = None
+            self._gamma_en_tabla = None
+        elif self._gamma_en_tabla is None or abs(self.gamma - self._gamma_en_tabla) > 0.02:
             i = np.arange(256, dtype=np.float32) / 255.0
             self._tabla_gamma = np.clip((i ** self.gamma) * 255.0, 0, 255).astype(np.uint8)
-        if self.usar_clahe:
-            self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            self._gamma_en_tabla = self.gamma
 
-        filtros = []
-        if self._tabla_gamma is not None:
-            filtros.append(f"gamma {self.gamma:.2f}")
-        if self.usar_clahe:
-            filtros.append("CLAHE")
-        self.resumen = (
-            f"brillo {brillo:.0f} · contraste {contraste:.0f} · "
-            + (" + ".join(filtros) if filtros else "sin filtros (imagen ya buena)")
-        )
-        self.listo = True
-        print(f"[escena] {self.resumen}")
+        self._frames += 1
+        if not self.listo and self._frames >= int(config.get("escena_frames", 30)):
+            self.listo = True
+            self.resumen = (f"brillo {self.brillo:.0f} · contraste {self.contraste:.0f} · "
+                            f"gamma {self.gamma:.2f}"
+                            + (" + CLAHE" if self.usar_clahe else ""))
+            print(f"[escena] {self.resumen} (se sigue ajustando solo)")
 
     def aplicar(self, frame):
-        if not self.listo or (self._tabla_gamma is None and not self.usar_clahe):
+        if self._tabla_gamma is None and not self.usar_clahe:
             return frame
 
         # Se trabaja en YUV para tocar solo la luminancia (Y) y dejar el
@@ -277,7 +309,7 @@ class MejoradorImagen:
         canal_y = yuv[:, :, 0]
         if self._tabla_gamma is not None:
             canal_y = cv2.LUT(canal_y, self._tabla_gamma)
-        if self._clahe is not None:
+        if self.usar_clahe:
             canal_y = self._clahe.apply(canal_y)
         yuv[:, :, 0] = canal_y
         return cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR)
@@ -315,7 +347,8 @@ class RegistroSenales:
             print(f"[registro] no se pudo abrir {self.ruta}: {e}")
             self.activo = False
 
-    def anotar(self, ahora, hx, hy, vertical, yaw, boca, ear, fps):
+    def anotar(self, ahora, hx, hy, vertical, yaw, boca, ear, fps,
+               brillo=0.0, gamma=1.0):
         if not self.activo or self._filas >= self.max_filas:
             return
         if (ahora - self._ultimo) < self.intervalo:
@@ -472,8 +505,7 @@ def generador_mediapipe():
                 frame = cv2.flip(frame, 1)
 
             # --- Reconocimiento de escenario (solo al principio) ---
-            if not mejorador.listo:
-                mejorador.analizar(frame)
+            mejorador.actualizar(frame)
 
             # --- Mejora de imagen ANTES de detectar ---
             frame = mejorador.aplicar(frame)
@@ -537,7 +569,8 @@ def generador_mediapipe():
             fps_suavizado = fps_actual if fps_suavizado == 0.0 else (0.10 * fps_actual + 0.90 * fps_suavizado)
 
             registro.anotar(ahora, hx, hy, senal_vertical, yaw,
-                            apertura_boca, ear, fps_suavizado)
+                            apertura_boca, ear, fps_suavizado,
+                            mejorador.brillo or 0.0, mejorador.gamma)
 
             yield frame, hx, hy, au45, conf, y_51, y_57
     finally:
