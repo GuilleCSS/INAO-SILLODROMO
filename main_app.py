@@ -35,8 +35,8 @@ RUTA_UI = os.path.join(BASE_DIR, "interfaz.ui")
 # (texto en pantalla, nombre que se le dice a Alexa, comando extra opcional
 #  que se manda justo después de "Alexa, enciende {nombre}")
 DISPOSITIVOS = [
-    ("Enchufe 2", "enchufe dos", None),
-    ("Enchufe 3", "enchufe tres", None),
+    ("Rasuradora", "rasuradora", None),
+    ("Secadora", "secadora", None),
     ("Foco 1", "foco uno", None),
     ("Ventilador 2", "ventilador dos", None),
     ("Alexa 2", "Alexa dos", None),

@@ -802,7 +802,7 @@ QPushButton#btnRecentrar:pressed {
                <item>
                 <widget class="QLabel" name="lbl_disp_1">
                  <property name="text">
-                  <string>Enchufe 2</string>
+                  <string>Rasuradora</string>
                  </property>
                  <property name="rol" stdset="0">
                   <string>dispositivo</string>
@@ -935,7 +935,7 @@ QPushButton#btnRecentrar:pressed {
                <item>
                 <widget class="QLabel" name="lbl_disp_2">
                  <property name="text">
-                  <string>Enchufe 3</string>
+                  <string>Secadora</string>
                  </property>
                  <property name="rol" stdset="0">
                   <string>dispositivo</string>
