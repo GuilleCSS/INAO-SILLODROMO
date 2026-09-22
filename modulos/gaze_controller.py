@@ -168,6 +168,16 @@ class GazeStateController:
         self._frac_x = 0.0
         self._frac_y = 0.0
 
+        self._navegacion_congelada = False
+
+        # Temblor natural de la señal con la cabeza quieta, medido en la
+        # calibración. Sin esto el margen de "ya regresó al centro" se
+        # calculaba como una fracción fija del umbral y podía quedar MÁS
+        # CHICO que el propio temblor: la cabeza volvía al centro pero
+        # fallaba por centésimas y la navegación se quedaba bloqueada.
+        self._ruido_x = 0.0
+        self._ruido_y = 0.0
+
         self._umbrales_cal = None
         self.cargar_calibracion()
 
@@ -193,6 +203,9 @@ class GazeStateController:
 
         self._centro_x, self._centro_y = float(centro[0]), float(centro[1])
         self._umbrales_cal = {k: float(v) for k, v in umbrales.items()}
+        ruido = datos.get("ruido") or {}
+        self._ruido_x = float(ruido.get("x", 0.0))
+        self._ruido_y = float(ruido.get("y", 0.0))
         self._muestras_centro = []
         self._hist_pos.clear()
         self._zona_anterior_x = "centro"
@@ -389,8 +402,7 @@ class GazeStateController:
         if not self.system_enabled:
             return self._estado(rostro=True)
 
-        # 2. CLIC SOSTENIDO POR BOCA (sobre el botón donde está el foco) —
-        # totalmente independiente de la navegación del paso 4.
+        # 2. CLIC SOSTENIDO POR BOCA (sobre el botón donde está el foco)
         self._actualizar_boca(self.ultima_apertura)
 
         # 3. SUAVIZADO EMA LIGERO (solo para no reaccionar a un frame suelto con ruido)
@@ -398,10 +410,39 @@ class GazeStateController:
         self.hx_suavizado = (alpha * hx) + ((1 - alpha) * self.hx_suavizado)
         self.hy_suavizado = (alpha * hy) + ((1 - alpha) * self.hy_suavizado)
 
-        # 4. NAVEGACIÓN POR SALTOS (solo cabeza, sin gestos adicionales)
-        self._actualizar_navegacion(self.hx_suavizado, self.hy_suavizado, current_time)
+        # 4. NAVEGACIÓN POR SALTOS (solo cabeza, sin gestos adicionales).
+        #
+        # Con el clic PRESIONADO no se navega: el clic es un botón del mouse
+        # de verdad, así que mover el foco mientras está apretado arrastra el
+        # cursor fuera del botón y lo suelta sobre otro. Estando sobre
+        # "Avanzar" con la silla en marcha, eso es justo lo que no debe
+        # pasar. Mientras la boca esté abierta, la cabeza queda libre.
+        if self.clic_mantenido:
+            self._navegacion_congelada = True
+        else:
+            if self._navegacion_congelada:
+                # Al soltar, la cabeza puede haber quedado desviada. Se toma
+                # la zona actual como punto de partida para que ese desvío
+                # acumulado no dispare un salto inmediato: hay que volver al
+                # centro y salir otra vez para que cuente.
+                self._resincronizar_zonas(self.hx_suavizado, self.hy_suavizado)
+                self._navegacion_congelada = False
+            self._actualizar_navegacion(self.hx_suavizado, self.hy_suavizado, current_time)
 
         return self._estado(rostro=True)
+
+    def _resincronizar_zonas(self, hx, hy):
+        """Pone las zonas en lo que la cabeza está haciendo AHORA, sin
+        disparar nada. Se usa al soltar el clic."""
+        if self._centro_x is None:
+            return
+        umbrales = self._umbrales()
+        dx, dy = hx - self._centro_x, hy - self._centro_y
+        self._zona_anterior_x = self._zona_eje(
+            dx, umbrales["izquierda"], umbrales["derecha"], "izquierda", "derecha", "centro")
+        self._zona_anterior_y = self._zona_eje(
+            dy, umbrales["arriba"], umbrales["abajo"], "arriba", "abajo", "centro")
+        self._tiempo_ultimo_paso = None
 
     # ==========================================================
     # NAVEGACIÓN POR SALTOS (gesto de cabeza -> un paso en el grafo)
@@ -448,14 +489,21 @@ class GazeStateController:
         return "centro"
 
     def _margenes(self, dx, dy, umbrales):
-        """Margen de "ya regresó al centro", medido contra el umbral del lado
+        """
+        Margen de "ya regresó al centro", medido contra el umbral del lado
         hacia el que la cabeza está desviada AHORA (no contra el menor de los
-        dos): con umbrales asimétricos —p. ej. izquierda más sensible que
-        derecha— usar el menor para ambos lados volvería innecesariamente
-        estricto el regreso desde el lado de umbral grande."""
+        dos): con umbrales asimétricos, usar el menor para ambos lados
+        volvería innecesariamente estricto el regreso desde el lado grande.
+
+        Nunca baja del temblor natural en reposo (medido en la calibración):
+        si el margen queda por debajo del ruido propio de la señal, la cabeza
+        vuelve al centro pero el sistema no lo reconoce y se queda bloqueado.
+        """
         umbral_x = umbrales["izquierda"] if dx < 0 else umbrales["derecha"]
         umbral_y = umbrales["arriba"] if dy < 0 else umbrales["abajo"]
-        return umbral_x * 0.6, umbral_y * 0.6
+        holgura = config.get("navegacion_holgura_ruido", 1.6)
+        return (max(umbral_x * 0.6, self._ruido_x * holgura),
+                max(umbral_y * 0.6, self._ruido_y * holgura))
 
     def _centro_listo(self, hx, hy):
         """Fija el centro con la mediana de las primeras lecturas. Devuelve
@@ -520,24 +568,22 @@ class GazeStateController:
         if self._recuperar_centro(hx, hy, dx_act, dy_act, mx, my, current_time):
             return
 
-        # Pausa tras cada paso: `navegacion_pausa_seg` es un MÍNIMO, no un
-        # reloj fijo. Cumplido ese mínimo, solo se recentra cuando la cabeza
-        # ya está de verdad cerca del centro ANTERIOR — si todavía no
-        # regresó, se sigue esperando en vez de adoptar una posición todavía
-        # desviada como si fuera neutral (eso hacía que terminar de volver
-        # al centro se leyera como un gesto hacia el lado contrario).
+        # Pausa tras cada paso: solo TIEMPO, sin exigir posición.
+        #
+        # Antes también se exigía que la cabeza volviera dentro del margen en
+        # LOS DOS ejes, y encima se recentraba ahí. Eso atoraba: al encadenar
+        # gestos (bajar y luego girar) un eje siempre estaba fuera, así que
+        # nunca se cumplía la condición. Medido en una sesión real: 86 % del
+        # tiempo bloqueado, con esperas de hasta 14 s para una pausa
+        # configurada de 0.5 s.
+        #
+        # No hace falta: la histéresis por eje de _zona_eje ya obliga a
+        # volver cerca del centro antes de que ese eje pueda disparar otra
+        # vez, y lo hace de forma independiente para X y para Y. La pausa
+        # solo sirve para dar un respiro entre pasos.
         if self._tiempo_ultimo_paso is not None:
-            transcurrido = current_time - self._tiempo_ultimo_paso
-            dx_anterior = hx - self._centro_x
-            dy_anterior = hy - self._centro_y
-            if transcurrido < config.get("navegacion_pausa_seg", 0.5):
+            if (current_time - self._tiempo_ultimo_paso) < config.get("navegacion_pausa_seg", 0.5):
                 return
-            margen_x, margen_y = self._margenes(dx_anterior, dy_anterior, umbrales)
-            if abs(dx_anterior) >= margen_x or abs(dy_anterior) >= margen_y:
-                return  # ya pasó el mínimo, pero la cabeza aún no volvió: seguir esperando
-            self._centro_x, self._centro_y = hx, hy
-            self._zona_anterior_x = "centro"
-            self._zona_anterior_y = "centro"
             self._tiempo_ultimo_paso = None
 
         dx = hx - self._centro_x

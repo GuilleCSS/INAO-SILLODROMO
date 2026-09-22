@@ -128,6 +128,7 @@ class DialogoCalibracion(QDialog):
         self._rostro = False
         self._hx = self._hy = 0.0
         self.centro = None
+        self.ruido = (0.0, 0.0)
         self.alcances = {}
         self._al_reves = {}
         self.guardado = False
@@ -250,6 +251,17 @@ class DialogoCalibracion(QDialog):
             xs = sorted(m[0] for m in self._muestras)
             ys = sorted(m[1] for m in self._muestras)
             self.centro = (xs[len(xs) // 2], ys[len(ys) // 2])
+            # Temblor en reposo: cuánto oscila la señal con la cabeza quieta.
+            # Es el dato que faltaba: los márgenes calculados como fracción
+            # fija del umbral podían quedar por debajo de este ruido, y
+            # entonces la cabeza volvía al centro sin que el sistema lo
+            # reconociera (navegación bloqueada). Se toma un percentil alto
+            # en vez del máximo para que un frame suelto no lo infle.
+            def dispersion(vals, centro):
+                d = sorted(abs(v - centro) for v in vals)
+                return d[int(len(d) * 0.9)] if d else 0.0
+            self.ruido = (dispersion(xs, self.centro[0]),
+                          dispersion(ys, self.centro[1]))
         else:
             base = self.centro[0] if eje == "x" else self.centro[1]
             # Desviación con el signo ya puesto en el sentido que se pidió
@@ -295,13 +307,24 @@ class DialogoCalibracion(QDialog):
 
     def _guardar(self):
         minimo = float(_config.get("calib_umbral_minimo", 0.12))
+        # El umbral también tiene que quedar claramente por encima del
+        # temblor en reposo: si no, ese eje se dispara solo sin que la
+        # persona mueva la cabeza.
+        veces_ruido = float(_config.get("calib_umbral_veces_ruido", 3.0))
+        piso = {"izquierda": self.ruido[0], "derecha": self.ruido[0],
+                "arriba": self.ruido[1], "abajo": self.ruido[1]}
+
         umbrales = {}
         for d in ("izquierda", "derecha", "arriba", "abajo"):
             # Piso de seguridad: si alguien no alcanzó a moverse en un paso,
             # un umbral diminuto haría que ese lado se dispare sin parar.
-            umbrales[d] = max(minimo, round(self.alcances.get(d, 0.0) * FRACCION, 4))
+            umbrales[d] = round(max(minimo,
+                                    piso[d] * veces_ruido,
+                                    self.alcances.get(d, 0.0) * FRACCION), 4)
 
-        datos = {"centro": list(self.centro), "umbrales": umbrales,
+        datos = {"centro": list(self.centro),
+                 "ruido": {"x": round(self.ruido[0], 4), "y": round(self.ruido[1], 4)},
+                 "umbrales": umbrales,
                  "alcances": {k: round(v, 4) for k, v in self.alcances.items()}}
         with open(RUTA_CALIBRACION, "w") as f:
             json.dump(datos, f, indent=2)
