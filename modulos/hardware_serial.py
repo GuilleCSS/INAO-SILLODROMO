@@ -19,7 +19,19 @@ class DomoticaController:
     """
 
     NEUTRO = int(config.get("airwheel_neutro", 128))
-    DELTA = int(config.get("airwheel_delta", 120))
+
+    # Potencia por tipo de movimiento. Antes era un solo valor para todo, y
+    # eso obligaba a elegir entre avanzar con fuerza o girar con precisión:
+    # girar a la misma potencia con la que se avanza hace imposible
+    # acomodarse en un espacio chico.
+    #
+    # El valor es cuánto se aleja del neutro (128), así que el máximo útil es
+    # 127 = potencia completa. Se limita a ese rango porque más no hace nada:
+    # el duty se recorta a 255 de todos modos, y un número mayor solo
+    # escondería que ya se está al tope.
+    _DELTA_ANTERIOR = int(config.get("airwheel_delta", 120))
+    DELTA_AVANCE = max(0, min(127, int(config.get("airwheel_delta_avance", _DELTA_ANTERIOR))))
+    DELTA_GIRO = max(0, min(127, int(config.get("airwheel_delta_giro", _DELTA_ANTERIOR))))
 
     def __init__(self, puerto='COM5', baudrate=9600):
         try:
@@ -39,16 +51,16 @@ class DomoticaController:
             print(f"[Simulación Serial] V={vertical} H={horizontal}")
 
     def avanzar(self):
-        self._enviar_duty(self.NEUTRO + self.DELTA, self.NEUTRO)
+        self._enviar_duty(self.NEUTRO + self.DELTA_AVANCE, self.NEUTRO)
 
     def regresar(self):
-        self._enviar_duty(self.NEUTRO - self.DELTA, self.NEUTRO)
+        self._enviar_duty(self.NEUTRO - self.DELTA_AVANCE, self.NEUTRO)
 
     def girar_izquierda(self):
-        self._enviar_duty(self.NEUTRO, self.NEUTRO + self.DELTA)
+        self._enviar_duty(self.NEUTRO, self.NEUTRO + self.DELTA_GIRO)
 
     def girar_derecha(self):
-        self._enviar_duty(self.NEUTRO, self.NEUTRO - self.DELTA)
+        self._enviar_duty(self.NEUTRO, self.NEUTRO - self.DELTA_GIRO)
 
     def detener(self):
         self._enviar_duty(self.NEUTRO, self.NEUTRO)
