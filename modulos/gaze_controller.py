@@ -158,6 +158,11 @@ class GazeStateController:
         # mal y recuperarse solo (ver _recuperar_centro).
         self._hist_pos = deque()
 
+        # Desviación actual respecto al centro, en fracción del umbral
+        # (±1 = justo en el umbral). Es lo que dibuja el indicador de cabeza.
+        self._frac_x = 0.0
+        self._frac_y = 0.0
+
         # Pausa tras cada paso: da tiempo a que la cabeza regrese al centro
         # antes de volver a evaluar gestos. `_tiempo_ultimo_paso` no-None
         # significa "en pausa/esperando volver al centro".
@@ -269,6 +274,8 @@ class GazeStateController:
             "clic": self.clic_mantenido,
             "apertura": self.ultima_apertura,
             "boca_umbral": base + config.get("boca_delta_on", 15.0),
+            "frac_x": self._frac_x,
+            "frac_y": self._frac_y,
             "hx": self.hx_suavizado,
             "hy": self.hy_suavizado,
             "direccion": self._etiquetas_nodos.get(self._foco, self._foco).upper(),
@@ -508,6 +515,11 @@ class GazeStateController:
             alpha_centro = config.get("navegacion_centro_alpha", 0.01)
             self._centro_x += alpha_centro * (hx - self._centro_x)
             self._centro_y += alpha_centro * (hy - self._centro_y)
+
+        # Fracción del umbral en cada eje, para que el indicador de cabeza
+        # dibuje exactamente lo que ve la navegación.
+        self._frac_x = dx / (umbrales["derecha"] if dx >= 0 else umbrales["izquierda"])
+        self._frac_y = dy / (umbrales["abajo"] if dy >= 0 else umbrales["arriba"])
 
         zona_x = self._zona_eje(dx, umbrales["izquierda"], umbrales["derecha"], "izquierda", "derecha", self._zona_anterior_x)
         zona_y = self._zona_eje(dy, umbrales["arriba"], umbrales["abajo"], "arriba", "abajo", self._zona_anterior_y)

@@ -508,13 +508,17 @@ class IndicadorCabeza(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.hx = 0.0
-        self.hy = 0.0
+        # Desviación respecto al centro APRENDIDO, en fracción del umbral de
+        # gesto: 0 = en reposo, ±1 = justo en el umbral. Antes se dibujaba
+        # con hx/hy crudos escalados por constantes heredadas de OpenFace,
+        # así que con otra escala de señal el punto quedaba clavado en un
+        # borde y el diagrama mostraba la cabeza girada de forma permanente.
+        self.frac_x = 0.0
+        self.frac_y = 0.0
         self.rostro = False
-        self.iman = False
 
-    def actualizar(self, hx, hy, rostro, iman=False):
-        self.hx, self.hy, self.rostro, self.iman = hx, hy, rostro, iman
+    def actualizar(self, frac_x, frac_y, rostro):
+        self.frac_x, self.frac_y, self.rostro = frac_x, frac_y, rostro
         self.update()
 
     def paintEvent(self, e):
@@ -528,10 +532,13 @@ class IndicadorCabeza(QWidget):
         p.setBrush(QColor(SURFACE_2))
         p.drawEllipse(c, R, R)
 
-        # Solo para escalar el dibujo del joystick (no controlan movimiento:
-        # la navegación por saltos usa el rango calibrado por persona).
-        xt, yt = config["x_threshold"], config["y_threshold"]
-        zona = QRectF(c.x() - R / 4, c.y() - R / 4, R / 2, R / 2)
+        # La caja punteada es el UMBRAL REAL de gesto (fracción ±1): dentro
+        # es zona muerta, fuera dispara un paso. Así el diagrama muestra
+        # exactamente lo que decide la navegación, y sirve para verificar la
+        # calibración a simple vista.
+        escala = (R - 7) / 1.4      # una fracción de 1.4 llega al borde
+        lado_caja = escala
+        zona = QRectF(c.x() - lado_caja, c.y() - lado_caja, 2 * lado_caja, 2 * lado_caja)
         p.setPen(QPen(QColor(BORDER), 1, Qt.DashLine))
         p.setBrush(Qt.NoBrush)
         p.drawRoundedRect(zona, 3, 3)
@@ -542,18 +549,13 @@ class IndicadorCabeza(QWidget):
             p.drawText(self.rect(), Qt.AlignCenter, "?")
             return
 
-        dx = max(-1.0, min(1.0, self.hx / (xt * 4))) * (R - 7)
-        dy = max(-1.0, min(1.0, self.hy / (yt * 4))) * (R - 7)
-        fuera = abs(self.hx) > xt or abs(self.hy) > yt
-        color = QColor(GREEN if self.iman else (CYAN if fuera else MUTED))
-        punto = QPointF(c.x() + dx, c.y() + dy)
+        fx = max(-1.4, min(1.4, self.frac_x))
+        fy = max(-1.4, min(1.4, self.frac_y))
+        fuera = abs(self.frac_x) >= 1.0 or abs(self.frac_y) >= 1.0
+        color = QColor(CYAN if fuera else MUTED)
+        punto = QPointF(c.x() + fx * escala, c.y() + fy * escala)
         p.setPen(QPen(con_alpha(color, 130), 2))
         p.drawLine(c, punto)
-        if self.iman:
-            # Anillo extra: el cursor está frenando cerca de un botón.
-            p.setPen(QPen(con_alpha(GREEN, 160), 2))
-            p.setBrush(Qt.NoBrush)
-            p.drawEllipse(punto, 15, 15)
         p.setPen(Qt.NoPen)
         p.setBrush(con_alpha(color, 60))
         p.drawEllipse(punto, 11, 11)

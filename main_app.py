@@ -427,7 +427,7 @@ class ControlCentral(QMainWindow):
             self._chip(self.chipSistema, "Sistema activo", "ok")
 
         self.vistaCamara.set_estado(e)
-        self.indCabeza.actualizar(e["hx"], e["hy"], activo)
+        self.indCabeza.actualizar(e["frac_x"], e["frac_y"], activo)
         self.indBoca.actualizar(e["apertura"], e["clic"], e.get("boca_umbral"))
         self.lblDireccion.setText(e["direccion"] if activo else "—")
 
