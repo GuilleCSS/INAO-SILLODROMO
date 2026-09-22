@@ -139,13 +139,24 @@ class GazeStateController:
         self._zona_anterior_y = "centro"       # "arriba" | "abajo" | "centro"
 
         # "Centro" de referencia para los gestos, auto-ajustado (no requiere
-        # ningún paso de calibración): arranca igual que hx_suavizado/
-        # hy_suavizado (en 0.0, no en "lo que sea que traiga el primer
-        # frame" — si el primer frame ya trae parte de un gesto, el centro
-        # lo absorbería y ese umbral quedaría mal calibrado desde el
-        # arranque) y se va corrigiendo solo mientras la cabeza está en reposo.
-        self._centro_x = 0.0
-        self._centro_y = 0.0
+        # ningún paso de calibración).
+        #
+        # NO se puede arrancar en 0.0: eso asume que la señal en reposo vale
+        # cero, lo cual es cierto para unos backends y falso para otros (con
+        # MediaPipe el reposo vertical ronda +2.5, porque la nariz siempre
+        # está por debajo de los ojos). Con el centro en 0 la cabeza queda
+        # permanentemente "hacia abajo" y jamás se puede detectar "arriba".
+        #
+        # Tampoco se toma del primer frame suelto (si viene con ruido o con
+        # un gesto a medias, el centro queda mal desde el arranque). Se usa
+        # la MEDIANA de las primeras lecturas, que es inmune a ambas cosas.
+        self._centro_x = None
+        self._centro_y = None
+        self._muestras_centro = []
+
+        # Historial corto de posiciones, para detectar que el centro quedó
+        # mal y recuperarse solo (ver _recuperar_centro).
+        self._hist_pos = deque()
 
         # Pausa tras cada paso: da tiempo a que la cabeza regrese al centro
         # antes de volver a evaluar gestos. `_tiempo_ultimo_paso` no-None
@@ -176,6 +187,8 @@ class GazeStateController:
         regresa el foco a Avanzar. Útil si los gestos empiezan a sentirse
         desalineados (la persona se acomodó, se cansó, etc.)."""
         self._centro_x, self._centro_y = self.hx_suavizado, self.hy_suavizado
+        self._muestras_centro = []
+        self._hist_pos.clear()
         self._zona_anterior_x = "centro"
         self._zona_anterior_y = "centro"
         self._foco = FOCO_INICIAL
@@ -399,8 +412,68 @@ class GazeStateController:
         umbral_y = umbrales["arriba"] if dy < 0 else umbrales["abajo"]
         return umbral_x * 0.6, umbral_y * 0.6
 
+    def _centro_listo(self, hx, hy):
+        """Fija el centro con la mediana de las primeras lecturas. Devuelve
+        False mientras aún esté juntando muestras."""
+        if self._centro_x is not None:
+            return True
+        self._muestras_centro.append((hx, hy))
+        if len(self._muestras_centro) < int(config.get("navegacion_centro_muestras", 15)):
+            return False
+        xs = sorted(m[0] for m in self._muestras_centro)
+        ys = sorted(m[1] for m in self._muestras_centro)
+        medio = len(xs) // 2
+        self._centro_x, self._centro_y = xs[medio], ys[medio]
+        self._muestras_centro = []
+        return True
+
+    def _recuperar_centro(self, hx, hy, dx, dy, margen_x, margen_y, current_time):
+        """
+        Red de seguridad contra quedarse atorado.
+
+        Si el centro de referencia queda mal (backend con otra escala, la
+        persona se reacomodó, un arranque con la cara a medio girar), la
+        cabeza queda permanentemente fuera del margen: no se dispara ningún
+        gesto nuevo y tampoco se re-arma nunca. Para distinguir eso de un
+        gesto en curso se exige que la cabeza lleve un rato QUIETA pero
+        desviada: un gesto de verdad se mueve, un centro mal puesto no.
+        """
+        ventana = float(config.get("navegacion_recuperacion_seg", 4.0))
+        self._hist_pos.append((current_time, hx, hy))
+        while self._hist_pos and (current_time - self._hist_pos[0][0]) > ventana:
+            self._hist_pos.popleft()
+
+        if abs(dx) < margen_x and abs(dy) < margen_y:
+            return False  # está donde debe: nada que recuperar
+        if len(self._hist_pos) < 5 or (current_time - self._hist_pos[0][0]) < ventana:
+            return False  # aún no hay suficiente historial
+
+        xs = [p[1] for p in self._hist_pos]
+        ys = [p[2] for p in self._hist_pos]
+        quieta = (max(xs) - min(xs)) < margen_x and (max(ys) - min(ys)) < margen_y
+        if not quieta:
+            return False  # se está moviendo: es un gesto, no un atasco
+
+        self._centro_x, self._centro_y = hx, hy
+        self._zona_anterior_x = "centro"
+        self._zona_anterior_y = "centro"
+        self._tiempo_ultimo_paso = None
+        self._hist_pos.clear()
+        return True
+
     def _actualizar_navegacion(self, hx, hy, current_time):
+        if not self._centro_listo(hx, hy):
+            return
+
         umbrales = self._umbrales()
+
+        # Red de seguridad ANTES de cualquier otra cosa: si el centro quedó
+        # mal, todas las ramas de abajo se quedarían esperando para siempre.
+        dx_act = hx - self._centro_x
+        dy_act = hy - self._centro_y
+        mx, my = self._margenes(dx_act, dy_act, umbrales)
+        if self._recuperar_centro(hx, hy, dx_act, dy_act, mx, my, current_time):
+            return
 
         # Pausa tras cada paso: `navegacion_pausa_seg` es un MÍNIMO, no un
         # reloj fijo. Cumplido ese mínimo, solo se recentra cuando la cabeza
