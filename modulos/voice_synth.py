@@ -27,10 +27,11 @@ import pygame
 
 # Voz mexicana nativa: el acento coincide con el idioma en el que está
 # configurada la Alexa, que es lo que mejor reconoce su modelo de voz.
+# Además es la voz aguda de las dos mexicanas, lo que ayuda a que se
+# distinga del ruido grave de fondo (ventiladores, tráfico, la propia silla).
 # Alternativa lista para probar (una línea, la caché se regenera sola):
-#   es-MX-DaliaNeural   mujer; una voz más aguda a veces se distingue mejor
-#                       del ruido grave de fondo (ventiladores, tráfico)
-VOZ = "es-MX-JorgeNeural"
+#   es-MX-JorgeNeural   hombre, la otra voz mexicana disponible
+VOZ = "es-MX-DaliaNeural"
 
 # Configuración pensada para que el Echo la entienda:
 #
