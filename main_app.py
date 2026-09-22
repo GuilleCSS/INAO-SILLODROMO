@@ -12,11 +12,11 @@ if BASE_DIR not in sys.path:
 
 import cv2
 from PyQt5 import uic
-from PyQt5.QtWidgets import QApplication, QMainWindow, QShortcut
+from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QShortcut
 from PyQt5.QtCore import Qt, QThread, QTimer, QTime, QPoint, pyqtSignal
 from PyQt5.QtGui import QKeySequence, QImage
 
-from modulos.mediapipe_reader import generador_mediapipe
+from modulos.mediapipe_reader import generador_mediapipe, resetear_usuario_principal
 from modulos.gaze_controller import GazeStateController
 from modulos.hardware_serial import DomoticaController
 from modulos.voice_synth import hablar_en_segundo_plano
@@ -146,7 +146,9 @@ class ControlCentral(QMainWindow):
         self.movimiento_actual = None
         self._ultimo_frame = None
         self._emergencia_activa = False
-        self._emergencia_luz_encendida = False
+        self._emergencia_origen = None
+        self._rostro_perdido_desde = None
+        self._rostro_alerta_emitida = False
         self._dialogo_calib = None
         self.timer_emergencia = QTimer(self)
         self.timer_emergencia.timeout.connect(self._pulso_emergencia)
@@ -154,6 +156,7 @@ class ControlCentral(QMainWindow):
         self._configurar_movimiento()
         self._configurar_domotica()
         self._configurar_estado_inicial()
+        self._configurar_sos()
         self.btnRecentrar.clicked.connect(self.recentrar_cursor)
 
         # ---------- Visión ----------
@@ -181,6 +184,8 @@ class ControlCentral(QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Space), self, activated=self.detener_movimiento)
         QShortcut(QKeySequence("Ctrl+R"), self, activated=self.recentrar_cursor)
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self.abrir_calibracion)
+        QShortcut(QKeySequence("F12"), self, activated=self.activar_emergencia)
+        QShortcut(QKeySequence("Ctrl+Shift+E"), self, activated=self.activar_emergencia)
         QShortcut(QKeySequence("Ctrl+E"), self, activated=self.cancelar_emergencia)
 
     # --------------------------------------------------------
@@ -213,50 +218,160 @@ class ControlCentral(QMainWindow):
         desalineados (se disparan solos, o cuesta más de lo normal) tras
         acomodarse o cansarse durante la sesión. No hace falta calibrar nada
         de antemano — la navegación por gestos ya se auto-ajusta sola."""
+        resetear_usuario_principal()
         if self.hilo.controller:
             self.hilo.controller.recentrar()
-            self.mostrar_mensaje("Centro de gestos recalibrado")
-            hablar_en_segundo_plano("Centro actualizado")
+            self.mostrar_mensaje("Centro de gestos y usuario principal recalibrados")
+            hablar_en_segundo_plano("Centro y usuario actualizados")
+
+    def _configurar_sos(self):
+        self.btnSOS = QPushButton("SOS", self.frameHeader)
+        self.btnSOS.setObjectName("btnSOS")
+        self.btnSOS.setCursor(Qt.PointingHandCursor)
+        self.btnSOS.setMinimumWidth(92)
+        self.btnSOS.clicked.connect(self.alternar_emergencia)
+
+        if hasattr(self, "layoutHeader"):
+            indice_reloj = self.layoutHeader.indexOf(self.lblReloj)
+            if indice_reloj >= 0:
+                self.layoutHeader.insertWidget(indice_reloj, self.btnSOS)
+            else:
+                self.layoutHeader.addWidget(self.btnSOS)
+
+        self._actualizar_boton_sos()
+
+    def _actualizar_boton_sos(self):
+        if not hasattr(self, "btnSOS"):
+            return
+
+        if self._emergencia_activa:
+            self.btnSOS.setText("Cancelar SOS")
+            self.btnSOS.setStyleSheet("""
+                QPushButton#btnSOS {
+                    padding: 8px 18px;
+                    border-radius: 18px;
+                    font-size: 15px;
+                    font-weight: 900;
+                    color: #FFFFFF;
+                    background-color: #B91C1C;
+                    border: 2px solid #FCA5A5;
+                }
+                QPushButton#btnSOS:hover { background-color: #991B1B; }
+                QPushButton#btnSOS:pressed { background-color: #7F1D1D; }
+            """)
+        else:
+            self.btnSOS.setText("SOS")
+            self.btnSOS.setStyleSheet("""
+                QPushButton#btnSOS {
+                    padding: 8px 18px;
+                    border-radius: 18px;
+                    font-size: 15px;
+                    font-weight: 900;
+                    color: #FEE2E2;
+                    background-color: rgba(239, 68, 68, 60);
+                    border: 2px solid rgba(248, 113, 113, 180);
+                }
+                QPushButton#btnSOS:hover { background-color: rgba(239, 68, 68, 100); }
+                QPushButton#btnSOS:pressed { background-color: rgba(185, 28, 28, 170); }
+            """)
+
+    def alternar_emergencia(self):
+        if self._emergencia_activa:
+            self.cancelar_emergencia()
+        else:
+            self.activar_emergencia("manual")
+
+    def _registrar_evento_emergencia(self, evento):
+        try:
+            with open("eventos_emergencia.log", "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} | {evento}\n")
+        except OSError:
+            pass
 
     # --------------------------------------------------------
     # EMERGENCIA (ojos cerrados sostenidos mucho más tiempo que el de pausa)
     # --------------------------------------------------------
 
-    def activar_emergencia(self):
-        """Suena una alarma repetida y parpadea una luz, hasta que se cancele
+    def activar_emergencia(self, origen="manual"):
+        """Suena una alarma repetida y bloquea la silla hasta que se cancele
         (abrir los ojos, o Ctrl+E para quien acompaña)."""
         if self._emergencia_activa:
             return
         self._emergencia_activa = True
+        self._emergencia_origen = origen
+        self.hilo.soltar_clic()
+        for btn in self.botones_movimiento.values():
+            btn.setDown(False)
+        self.domotica.detener()
+        self.movimiento_actual = None
+        self._chip(self.chipSilla, "Silla detenida por emergencia", "error")
         self._chip(self.chipSistema, "🚨 EMERGENCIA", "error")
         self.mostrar_mensaje("Emergencia activada: se necesita ayuda")
+        self._actualizar_boton_sos()
+        self._registrar_evento_emergencia(f"SOS activado: {origen}")
         self._pulso_emergencia()
         self.timer_emergencia.start(int(config.get("emergencia_intervalo_seg", 3.0) * 1000))
 
     def _pulso_emergencia(self):
-        """Un "tic" de la alarma: repite el aviso hablado y alterna la luz."""
+        """Un "tic" de la alarma: repite el aviso hablado y fuerza paro."""
+        self.domotica.detener()
+        QApplication.beep()
         hablar_en_segundo_plano(config.get("emergencia_mensaje", "Emergencia. Se necesita ayuda."))
 
-        dispositivo = config.get("emergencia_dispositivo_voz", "foco uno")
-        self._emergencia_luz_encendida = not self._emergencia_luz_encendida
-        accion = "enciende" if self._emergencia_luz_encendida else "apaga"
-        hablar_en_segundo_plano(f"Alexa, {accion} {dispositivo}")
-
-    def cancelar_emergencia(self):
+    def cancelar_emergencia(self, mensaje="Emergencia cancelada"):
         """Detiene la alarma. Se llama sola al abrir los ojos, o con Ctrl+E
         si quien acompaña necesita pararla manualmente."""
         if not self._emergencia_activa:
             return
         self._emergencia_activa = False
+        self._emergencia_origen = None
         self.timer_emergencia.stop()
-        if self._emergencia_luz_encendida:
-            # No dejar la luz de emergencia encendida al cancelar.
-            dispositivo = config.get("emergencia_dispositivo_voz", "foco uno")
-            hablar_en_segundo_plano(f"Alexa, apaga {dispositivo}")
-            self._emergencia_luz_encendida = False
+        self.domotica.detener()
+        self.movimiento_actual = None
+        self._chip(self.chipSilla, "Silla detenida", "idle")
         self._chip(self.chipSistema, "Sistema activo", "ok")
-        self.mostrar_mensaje("Emergencia cancelada")
-        hablar_en_segundo_plano("Emergencia cancelada")
+        self.mostrar_mensaje(mensaje)
+        self._actualizar_boton_sos()
+        self._registrar_evento_emergencia(mensaje)
+        hablar_en_segundo_plano(mensaje)
+
+    def _gestionar_rostro_perdido(self, rostro_detectado):
+        if rostro_detectado:
+            if self._emergencia_activa and self._emergencia_origen == "rostro_perdido":
+                self.cancelar_emergencia("Rostro recuperado. Emergencia cancelada.")
+            elif self._rostro_alerta_emitida:
+                self._chip(self.chipSilla, "Silla detenida", "idle")
+                self.mostrar_mensaje("Rostro recuperado")
+                self._registrar_evento_emergencia("Rostro recuperado")
+            self._rostro_perdido_desde = None
+            self._rostro_alerta_emitida = False
+            return
+
+        if self._emergencia_activa:
+            return
+
+        ahora = time.time()
+        if self._rostro_perdido_desde is None:
+            self._rostro_perdido_desde = ahora
+            self._rostro_alerta_emitida = False
+
+        elapsed = ahora - self._rostro_perdido_desde
+        alerta_seg = float(config.get("rostro_alerta_seg", 1.0))
+        sos_seg = float(config.get("rostro_sos_seg", 6.0))
+
+        if elapsed >= alerta_seg and not self._rostro_alerta_emitida:
+            self.hilo.soltar_clic()
+            self.domotica.detener()
+            self.movimiento_actual = None
+            self._chip(self.chipSilla, "Silla detenida: rostro perdido", "warn")
+            self.mostrar_mensaje("Rostro perdido: silla detenida. ¿Estás bien?")
+            hablar_en_segundo_plano("Rostro no detectado. ¿Estás bien?")
+            self._registrar_evento_emergencia("Rostro perdido: advertencia")
+            self._rostro_alerta_emitida = True
+
+        if elapsed >= sos_seg:
+            self._registrar_evento_emergencia("SOS por rostro perdido")
+            self.activar_emergencia("rostro_perdido")
 
     def _configurar_movimiento(self):
         self.botones_movimiento = {
@@ -299,8 +414,9 @@ class ControlCentral(QMainWindow):
             "Cabeza: gesto arriba/abajo/izq/der mueve el foco un botón (no hace falta calibrar)   ·   "
             "Boca abierta: clic sostenido   ·   "
             f"Ojos cerrados {config.get('blink_hold_time', 3.5):g} s: pausar   ·   "
-            f"Ojos cerrados {config.get('emergencia_hold_time', 10.0):g} s: alarma de emergencia (Ctrl+E cancela)   ·   "
-            "Botón Recentrar (o Ctrl+R): si los gestos se sienten desalineados"
+            f"Ojos cerrados {config.get('emergencia_hold_time', 10.0):g} s: SOS   ·   "
+            "Botón SOS/F12 activa emergencia   ·   Ctrl+E cancela   ·   "
+            "Botón Recentrar (o Ctrl+R): reajusta gestos y usuario principal"
         )
 
     # --------------------------------------------------------
@@ -387,6 +503,10 @@ class ControlCentral(QMainWindow):
     # --------------------------------------------------------
 
     def iniciar_movimiento(self, mov):
+        if self._emergencia_activa:
+            self.domotica.detener()
+            self.mostrar_mensaje("Movimiento bloqueado: emergencia activa")
+            return
         texto, metodo = MOVIMIENTOS[mov]
         getattr(self.domotica, metodo)()
         self.movimiento_actual = mov
@@ -445,9 +565,11 @@ class ControlCentral(QMainWindow):
             self._dialogo_calib.actualizar_lectura(e["hx"], e["hy"], e["rostro"])
 
         if e.get("emergencia"):
-            self.activar_emergencia()
+            self.activar_emergencia("ojos")
         if e.get("emergencia_cancelar"):
             self.cancelar_emergencia()
+
+        self._gestionar_rostro_perdido(e["rostro"])
 
         activo = e["rostro"] and e["sistema"]
 

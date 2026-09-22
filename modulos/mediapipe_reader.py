@@ -33,7 +33,7 @@ with open("config.json", "r") as f:
 
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(
-    max_num_faces=1,
+    max_num_faces=max(1, int(config.get("usuario_max_rostros", 4))),
     # refine_landmarks mejora la precisión de ojos y labios (justo lo que
     # usamos para el parpadeo y el clic), a cambio de algo de CPU. Se deja
     # configurable por si hace falta aligerar en un equipo lento.
@@ -41,6 +41,151 @@ face_mesh = mp_face_mesh.FaceMesh(
     min_detection_confidence=config.get("mp_detection_confidence", 0.60),
     min_tracking_confidence=config.get("mp_tracking_confidence", 0.60),
 )
+
+_RESET_USUARIO_PRINCIPAL = False
+
+
+def resetear_usuario_principal():
+    """Pide al hilo de cámara que vuelva a elegir al usuario principal."""
+    global _RESET_USUARIO_PRINCIPAL
+    _RESET_USUARIO_PRINCIPAL = True
+
+
+def _caja_rostro(face_landmarks):
+    xs = [p.x for p in face_landmarks.landmark]
+    ys = [p.y for p in face_landmarks.landmark]
+    x_min = max(0.0, min(xs))
+    y_min = max(0.0, min(ys))
+    x_max = min(1.0, max(xs))
+    y_max = min(1.0, max(ys))
+    ancho = max(0.0, x_max - x_min)
+    alto = max(0.0, y_max - y_min)
+    return {
+        "x_min": x_min,
+        "y_min": y_min,
+        "x_max": x_max,
+        "y_max": y_max,
+        "cx": x_min + ancho / 2.0,
+        "cy": y_min + alto / 2.0,
+        "area": ancho * alto,
+    }
+
+
+class UsuarioPrincipalTracker:
+    """
+    Mantiene fijo al primer usuario válido de la sesión.
+
+    MediaPipe puede detectar varias caras, pero no entrega identidad. Para no
+    cambiarse a alguien que pasa atrás, se usa una huella geométrica simple:
+    centro y tamaño del rostro bloqueado. Si otra cara no se parece lo
+    suficiente a esa caja, se ignora y el sistema lo reporta como rostro
+    perdido.
+    """
+
+    def __init__(self):
+        self.activo = bool(config.get("usuario_bloqueo_inicial", True))
+        self.modo_inicial = str(config.get("usuario_inicial_modo", "mayor")).lower()
+        self.distancia_max = float(config.get("usuario_match_distancia", 0.30))
+        self.escala_min = float(config.get("usuario_match_escala_min", 0.45))
+        self.escala_max = float(config.get("usuario_match_escala_max", 2.20))
+        self.suavizado = float(config.get("usuario_bbox_suavizado", 0.25))
+        self.area_min = float(config.get("usuario_area_min", 0.015))
+        self.mostrar_debug = bool(config.get("mostrar_usuario_bloqueado", True))
+        self.caja = None
+
+    def resetear(self):
+        self.caja = None
+        print("[usuario] bloqueo reiniciado; esperando rostro principal")
+
+    def seleccionar(self, faces):
+        if not faces:
+            return None, []
+
+        candidatos = [
+            {"landmarks": face, "caja": _caja_rostro(face)}
+            for face in faces
+        ]
+        candidatos = [c for c in candidatos if c["caja"]["area"] >= self.area_min]
+        if not candidatos:
+            return None, []
+
+        if not self.activo:
+            return candidatos[0], candidatos
+
+        if self.caja is None:
+            elegido = self._elegir_inicial(candidatos)
+            self.caja = dict(elegido["caja"])
+            print("[usuario] rostro principal bloqueado")
+            return elegido, candidatos
+
+        elegido = self._mejor_match(candidatos)
+        if elegido is None:
+            return None, candidatos
+
+        self._actualizar_caja(elegido["caja"])
+        return elegido, candidatos
+
+    def _elegir_inicial(self, candidatos):
+        if self.modo_inicial == "centro":
+            return min(
+                candidatos,
+                key=lambda c: math.hypot(c["caja"]["cx"] - 0.5, c["caja"]["cy"] - 0.5),
+            )
+        if self.modo_inicial == "primero":
+            return candidatos[0]
+        return max(candidatos, key=lambda c: c["caja"]["area"])
+
+    def _mejor_match(self, candidatos):
+        mejor = None
+        mejor_score = float("inf")
+        for candidato in candidatos:
+            caja = candidato["caja"]
+            dist = math.hypot(caja["cx"] - self.caja["cx"], caja["cy"] - self.caja["cy"])
+            ratio = caja["area"] / max(self.caja["area"], 1e-6)
+            if dist > self.distancia_max:
+                continue
+            if ratio < self.escala_min or ratio > self.escala_max:
+                continue
+
+            score = dist + 0.12 * abs(math.log(max(ratio, 1e-6)))
+            if score < mejor_score:
+                mejor = candidato
+                mejor_score = score
+        return mejor
+
+    def _actualizar_caja(self, caja):
+        alpha = max(0.0, min(1.0, self.suavizado))
+        for clave, valor in caja.items():
+            self.caja[clave] = (1.0 - alpha) * self.caja[clave] + alpha * valor
+
+    def dibujar(self, frame, candidatos, elegido):
+        if not self.mostrar_debug:
+            return
+        for candidato in candidatos:
+            caja = candidato["caja"]
+            es_usuario = candidato is elegido
+            color = (40, 180, 80) if es_usuario else (40, 40, 210)
+            texto = "Usuario" if es_usuario else "Ignorado"
+            self._dibujar_caja(frame, caja, color, texto)
+
+    @staticmethod
+    def _dibujar_caja(frame, caja, color, texto):
+        alto, ancho = frame.shape[:2]
+        x1 = int(caja["x_min"] * ancho)
+        y1 = int(caja["y_min"] * alto)
+        x2 = int(caja["x_max"] * ancho)
+        y2 = int(caja["y_max"] * alto)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        cv2.putText(
+            frame,
+            texto,
+            (x1, max(18, y1 - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
 
 # --- Modelo 3D genérico de cara, para estimar el yaw con solvePnP ---
 MODEL_POINTS = np.array([
@@ -300,6 +445,7 @@ def generador_mediapipe():
     espejo = bool(config.get("camara_espejo", True))
     dibujar_malla = bool(config.get("mostrar_malla", False))
     registro = RegistroSenales()
+    tracker_usuario = UsuarioPrincipalTracker()
 
     # El detector corre sobre una copia reducida: MediaPipe no gana precisión
     # útil con más resolución para esta tarea, y bajarla aligera bastante la
@@ -312,6 +458,11 @@ def generador_mediapipe():
 
     try:
         while cap.isOpened():
+            global _RESET_USUARIO_PRINCIPAL
+            if _RESET_USUARIO_PRINCIPAL:
+                tracker_usuario.resetear()
+                _RESET_USUARIO_PRINCIPAL = False
+
             ok, frame = cap.read()
             if not ok:
                 time.sleep(0.01)
@@ -342,8 +493,14 @@ def generador_mediapipe():
             hx = hy = au45 = conf = y_51 = y_57 = 0.0
             yaw = senal_vertical = apertura_boca = ear = 0.0
 
+            elegido = None
+            candidatos = []
             if resultados.multi_face_landmarks:
-                face_landmarks = resultados.multi_face_landmarks[0]
+                elegido, candidatos = tracker_usuario.seleccionar(resultados.multi_face_landmarks)
+                tracker_usuario.dibujar(frame, candidatos, elegido)
+
+            if elegido:
+                face_landmarks = elegido["landmarks"]
                 img_h, img_w = frame_det.shape[:2]
 
                 yaw = obtener_yaw(frame_det, face_landmarks)
