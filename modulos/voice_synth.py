@@ -25,16 +25,30 @@ import threading
 import edge_tts
 import pygame
 
-VOZ = "es-MX-JorgeNeural"
+# Voz multilingüe de nueva generación. Pese al prefijo "en-US", estas voces
+# se entrenaron para sonar NATIVAS en cada idioma que hablan, no como un
+# angloparlante leyendo español, y tienen una prosodia bastante más fluida
+# que las "Neural" estándar de un solo idioma (es-MX-JorgeNeural y
+# es-MX-DaliaNeural son las únicas dos mexicanas, y son de la generación
+# anterior).
+#
+# Alternativas ya probadas, por si esta no convence — basta cambiar esta
+# línea, la caché se regenera sola:
+#   en-US-BrianMultilingualNeural   hombre, más coloquial
+#   en-US-AvaMultilingualNeural     mujer, expresiva
+#   en-US-EmmaMultilingualNeural    mujer, clara y conversacional
+#   es-MX-JorgeNeural               la anterior, acento mexicano garantizado
+VOZ = "en-US-AndrewMultilingualNeural"
 
-# Sin deformar la voz, y un poco más lento que lo normal.
+# Sin deformar la voz y a ritmo natural.
 #
 # Antes iba a "+10%" de velocidad y "-15Hz" de tono. Las dos cosas juegan en
 # contra de que Alexa entienda: desplazar el tono corre los formantes (la
-# huella acústica que distingue una vocal de otra) y hablar rápido recorta
-# la articulación. Las voces neurales ya suenan naturales por sí solas; lo
-# mejor que se puede hacer por el reconocimiento es no deformarlas.
-VELOCIDAD = "-8%"
+# huella acústica que distingue una vocal de otra) y cambiar la velocidad
+# rompe el ritmo con el que la voz fue entrenada. Estas voces ya están
+# afinadas para sonar naturales; lo mejor que se puede hacer por el
+# reconocimiento es no tocarlas.
+VELOCIDAD = "+0%"
 VOLUMEN = "+0%"
 TONO = "+0Hz"
 
