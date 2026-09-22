@@ -25,31 +25,26 @@ import threading
 import edge_tts
 import pygame
 
-# Voz multilingüe de nueva generación. Pese al prefijo "en-US", estas voces
-# se entrenaron para sonar NATIVAS en cada idioma que hablan, no como un
-# angloparlante leyendo español, y tienen una prosodia bastante más fluida
-# que las "Neural" estándar de un solo idioma (es-MX-JorgeNeural y
-# es-MX-DaliaNeural son las únicas dos mexicanas, y son de la generación
-# anterior).
-#
-# Alternativas ya probadas, por si esta no convence — basta cambiar esta
-# línea, la caché se regenera sola:
-#   en-US-BrianMultilingualNeural   hombre, más coloquial
-#   en-US-AvaMultilingualNeural     mujer, expresiva
-#   en-US-EmmaMultilingualNeural    mujer, clara y conversacional
-#   es-MX-JorgeNeural               la anterior, acento mexicano garantizado
-VOZ = "en-US-AndrewMultilingualNeural"
+# Voz mexicana nativa: el acento coincide con el idioma en el que está
+# configurada la Alexa, que es lo que mejor reconoce su modelo de voz.
+# Alternativa lista para probar (una línea, la caché se regenera sola):
+#   es-MX-DaliaNeural   mujer; una voz más aguda a veces se distingue mejor
+#                       del ruido grave de fondo (ventiladores, tráfico)
+VOZ = "es-MX-JorgeNeural"
 
-# Sin deformar la voz y a ritmo natural.
+# Configuración pensada para que el Echo la entienda:
 #
-# Antes iba a "+10%" de velocidad y "-15Hz" de tono. Las dos cosas juegan en
-# contra de que Alexa entienda: desplazar el tono corre los formantes (la
-# huella acústica que distingue una vocal de otra) y cambiar la velocidad
-# rompe el ritmo con el que la voz fue entrenada. Estas voces ya están
-# afinadas para sonar naturales; lo mejor que se puede hacer por el
-# reconocimiento es no tocarlas.
+# - Velocidad y tono SIN tocar. Antes iban a "+10%" y "-15Hz": desplazar el
+#   tono corre los formantes (la huella acústica que distingue una vocal de
+#   otra) y cambiar la velocidad rompe el ritmo con el que la voz fue
+#   entrenada. Dejarlos neutros es lo que la hace sonar fluida.
+#
+# - Volumen un poco arriba. Es la única de las cuatro que sí conviene mover:
+#   no deforma la voz, solo mejora la relación señal/ruido frente al
+#   micrófono del Echo. No se sube más porque pasado cierto punto satura, y
+#   un audio recortado se reconoce PEOR que uno más bajo pero limpio.
 VELOCIDAD = "+0%"
-VOLUMEN = "+0%"
+VOLUMEN = "+15%"
 TONO = "+0Hz"
 
 CACHE_DIR = "cache_voz"
