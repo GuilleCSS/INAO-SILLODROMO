@@ -53,5 +53,10 @@
     "vista_fps": 15,
     "vista_ancho": 640,
     "camara_espejo": true,
-    "mostrar_malla": false
+    "mostrar_malla": false,
+    "calibrar_al_iniciar": true,
+    "calib_preparar_seg": 1.5,
+    "calib_capturar_seg": 2.0,
+    "calib_fraccion_umbral": 0.35,
+    "calib_umbral_minimo": 0.12
 }

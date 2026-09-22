@@ -19,6 +19,7 @@ from modulos.mediapipe_reader import generador_mediapipe
 from modulos.gaze_controller import GazeStateController
 from modulos.hardware_serial import DomoticaController
 from modulos.voice_synth import hablar_en_segundo_plano
+from modulos.calibracion_ui import DialogoCalibracion
 
 
 # ============================================================
@@ -140,6 +141,7 @@ class ControlCentral(QMainWindow):
         self._ultimo_frame = None
         self._emergencia_activa = False
         self._emergencia_luz_encendida = False
+        self._dialogo_calib = None
         self.timer_emergencia = QTimer(self)
         self.timer_emergencia.timeout.connect(self._pulso_emergencia)
 
@@ -152,6 +154,8 @@ class ControlCentral(QMainWindow):
         self.hilo = HiloProcesamiento()
         self.hilo.senal_mensaje.connect(self.mostrar_mensaje)
         self.hilo.senal_listo.connect(self._recalcular_nodos_navegacion)
+        if config.get("calibrar_al_iniciar", True):
+            self.hilo.senal_listo.connect(self.abrir_calibracion)
         self.hilo.senal_estado.connect(self.actualizar_estado)
         self.hilo.senal_frame.connect(self._frame_camara)
         self.hilo.start()
@@ -170,11 +174,29 @@ class ControlCentral(QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Escape), self, activated=self.close)
         QShortcut(QKeySequence(Qt.Key_Space), self, activated=self.detener_movimiento)
         QShortcut(QKeySequence("Ctrl+R"), self, activated=self.recentrar_cursor)
+        QShortcut(QKeySequence("Ctrl+K"), self, activated=self.abrir_calibracion)
         QShortcut(QKeySequence("Ctrl+E"), self, activated=self.cancelar_emergencia)
 
     # --------------------------------------------------------
     # CONFIGURACIÓN DE LA INTERFAZ
     # --------------------------------------------------------
+
+    def abrir_calibracion(self):
+        """Mide el reposo y el alcance de gesto de hoy. Hace falta porque ese
+        alcance cambia bastante entre sesiones (distancia a la cámara,
+        ángulo, postura), y ningún umbral fijo sirve para todas."""
+        self.detener_movimiento()
+        dialogo = DialogoCalibracion(self)
+        self._dialogo_calib = dialogo
+        resultado = dialogo.exec_()
+        self._dialogo_calib = None
+
+        if dialogo.guardado and self.hilo.controller:
+            self.hilo.controller.cargar_calibracion()
+            self.mostrar_mensaje("Calibración lista")
+            hablar_en_segundo_plano("Listo")
+        elif resultado == 0:
+            self.mostrar_mensaje("Calibración saltada: se usan los valores guardados")
 
     def recentrar_cursor(self):
         """Fuerza el centro de referencia de los gestos a la postura actual y
@@ -409,6 +431,9 @@ class ControlCentral(QMainWindow):
 
     def actualizar_estado(self, e):
         self._ultimo_frame = time.time()
+
+        if self._dialogo_calib is not None:
+            self._dialogo_calib.actualizar_lectura(e["hx"], e["hy"], e["rostro"])
 
         if e.get("emergencia"):
             self.activar_emergencia()

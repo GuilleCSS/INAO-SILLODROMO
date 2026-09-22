@@ -1,3 +1,4 @@
+import os
 import time
 import json
 from collections import deque
@@ -162,6 +163,38 @@ class GazeStateController:
         # (±1 = justo en el umbral). Es lo que dibuja el indicador de cabeza.
         self._frac_x = 0.0
         self._frac_y = 0.0
+
+        self._umbrales_cal = None
+        self.cargar_calibracion()
+
+    # --------------------------------------------------------
+    # CALIBRACIÓN DE LA SESIÓN
+    # --------------------------------------------------------
+
+    def cargar_calibracion(self, ruta="calibracion.json"):
+        """Toma el centro y los umbrales medidos al inicio de la sesión.
+        Si no hay archivo, se sigue con los valores de config.json y el
+        centro se aprende solo (comportamiento anterior)."""
+        if not os.path.exists(ruta):
+            return False
+        try:
+            with open(ruta, "r") as f:
+                datos = json.load(f)
+            centro = datos["centro"]
+            umbrales = datos["umbrales"]
+            if not all(k in umbrales for k in ("izquierda", "derecha", "arriba", "abajo")):
+                return False
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+
+        self._centro_x, self._centro_y = float(centro[0]), float(centro[1])
+        self._umbrales_cal = {k: float(v) for k, v in umbrales.items()}
+        self._muestras_centro = []
+        self._hist_pos.clear()
+        self._zona_anterior_x = "centro"
+        self._zona_anterior_y = "centro"
+        self._tiempo_ultimo_paso = None
+        return True
 
         # Pausa tras cada paso: da tiempo a que la cabeza regrese al centro
         # antes de volver a evaluar gestos. `_tiempo_ultimo_paso` no-None
@@ -371,10 +404,11 @@ class GazeStateController:
     # ==========================================================
 
     def _umbrales(self):
-        """Umbral de gesto POR DIRECCIÓN (no compartido entre arriba/abajo ni
-        izquierda/derecha): la cámara no responde igual de sensible en los
-        dos sentidos de un mismo eje (ángulo de montaje, postura habitual
-        frente a la pantalla, etc.), así que cada rumbo se ajusta aparte."""
+        """Umbral de gesto POR DIRECCIÓN. Si hay calibración de esta sesión
+        se usa esa (medida del alcance real de la persona hoy); si no, los
+        valores por defecto de config.json."""
+        if self._umbrales_cal:
+            return self._umbrales_cal
         xt = config.get("navegacion_umbral_x", config.get("x_threshold", 0.06))
         yt = config.get("navegacion_umbral_y", config.get("y_threshold", 0.05))
         return {
