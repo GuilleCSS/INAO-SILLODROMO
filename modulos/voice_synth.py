@@ -48,6 +48,21 @@ VELOCIDAD = "+0%"
 VOLUMEN = "+15%"
 TONO = "+0Hz"
 
+# Qué separa "Alexa" de la orden. Es lo que controla la pausa entre ambas.
+#
+# Medido con esta misma voz sobre "Alexa[sep] enciende rasuradora":
+#     ", "   -> 3.00 s, sin pausa audible (iba demasiado rápido)
+#     ". "   -> 3.88 s, pausa de ~0.9 s      <- lo que se usa
+#     "... " -> 3.00 s, no agrega nada
+#     "; "   -> 3.05 s, casi nada
+#
+# La alternativa era partir la frase en dos audios y esperar en medio, que
+# parecía dar control exacto del silencio. Medirlo mostró lo contrario: cada
+# clip suelto arrastra su propio relleno (1.15 s entre los dos), así que pedir
+# 0.25 s producía 1.45 s reales y un total de 4.45 s. Más pausa que el punto,
+# más lento, y con código extra. Un solo audio gana en todo.
+SEPARADOR_ALEXA = ". "
+
 CACHE_DIR = "cache_voz"
 
 
@@ -89,6 +104,21 @@ def _asegurar_audio(texto):
     return asyncio.run(_asegurar_audio_async(texto))
 
 
+def _con_pausa(texto):
+    """Cambia la coma que sigue a "Alexa" por SEPARADOR_ALEXA, para que el
+    sintetizador deje una pausa antes de la orden. El resto de las frases
+    (avisos del sistema, calibración) se quedan como están."""
+    texto = texto.strip()
+    if texto.lower().startswith("alexa,"):
+        orden = texto.split(",", 1)[1].strip()
+        if SEPARADOR_ALEXA.strip() in (".", "!", "?") and orden:
+            # Mayúscula tras el punto: así el texto queda como dos oraciones
+            # de verdad, que es la forma en que se midió la pausa.
+            orden = orden[0].upper() + orden[1:]
+        return "Alexa" + SEPARADOR_ALEXA + orden
+    return texto
+
+
 # ============================================================
 # REPRODUCIR
 # ============================================================
@@ -114,15 +144,10 @@ def _procesar_cola():
     while True:
         texto = _cola.get()
         try:
-            # Toda la frase como UN solo audio, incluidos los comandos de
-            # Alexa. Antes se partía en "Alexa" + pausa fija + orden, para
-            # no esperar a la red a media frase; con la caché eso ya no hace
-            # falta, y partirla salía peor: el corte artificial entre dos
-            # archivos suena robótico, mientras que la coma de "Alexa, apaga
-            # enchufe dos" ya hace que el sintetizador ponga una pausa con
-            # entonación natural. Cuanto más se parezca a una persona
-            # hablando, mejor lo reconoce el Echo.
-            _reproducir(_asegurar_audio(texto.strip()))
+            # La frase entera va como UN solo audio; la pausa la pone el
+            # propio sintetizador a partir de la puntuación, con entonación
+            # natural y sin el relleno que arrastran los clips sueltos.
+            _reproducir(_asegurar_audio(_con_pausa(texto)))
         except Exception as e:
             print(f"[voz] Error reproduciendo '{texto}': {e}")
         finally:
