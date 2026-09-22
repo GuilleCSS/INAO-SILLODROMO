@@ -176,7 +176,10 @@ class TileButton(QPushButton):
 
         r = QRectF(self.rect()).adjusted(4, 4, -4, -4)
         w, h = r.width(), r.height()
-        radio = min(22.0, min(w, h) * 0.14)
+        # Radio bajo a propósito: junto con el espaciado mínimo entre tiles
+        # en la interfaz, se leen como zonas grandes contiguas en vez de
+        # botones sueltos, más fáciles de acertar con el cursor.
+        radio = min(12.0, min(w, h) * 0.10)
 
         if activo:
             for i, a in enumerate((80, 45, 20)):
@@ -495,6 +498,8 @@ class IndicadorCabeza(QWidget):
         p.setBrush(QColor(SURFACE_2))
         p.drawEllipse(c, R, R)
 
+        # Solo para escalar el dibujo del joystick (no controlan movimiento:
+        # la navegación por saltos usa el rango calibrado por persona).
         xt, yt = config["x_threshold"], config["y_threshold"]
         zona = QRectF(c.x() - R / 4, c.y() - R / 4, R / 2, R / 2)
         p.setPen(QPen(QColor(BORDER), 1, Qt.DashLine))
@@ -536,10 +541,14 @@ class IndicadorBoca(QWidget):
         super().__init__(parent)
         self.apertura = 0.0
         self.clic = False
-        self.umbral = float(config.get("boca_threshold", 25.0))
+        # Umbral en vivo (auto-ajustado a la boca cerrada real de cada
+        # persona), no un valor fijo — se actualiza en cada frame.
+        self.umbral = float(config.get("boca_delta_on", 15.0))
 
-    def actualizar(self, apertura, clic):
+    def actualizar(self, apertura, clic, umbral=None):
         self.apertura, self.clic = apertura, clic
+        if umbral is not None:
+            self.umbral = umbral
         self.update()
 
     def paintEvent(self, e):

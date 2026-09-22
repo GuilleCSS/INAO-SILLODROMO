@@ -4,4 +4,4 @@ __pycache__/
 *.pyc
 venv/
 .venv/
-calibracion.json
+cache_voz/

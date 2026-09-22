@@ -1,94 +1,83 @@
 import time
 import json
-import os
-from .mouse_action import (
-    mover_cursor, mover_cursor_absoluto, presionar_clic, soltar_clic,
-    posicion_cursor, tamano_pantalla,
-)
+from .mouse_action import mover_cursor_absoluto, presionar_clic, soltar_clic
 from .voice_synth import hablar_en_segundo_plano
 
 with open('config.json', 'r') as f:
     config = json.load(f)
 
-RUTA_CALIBRACION = "calibracion.json"
-
 
 # ============================================================
-# CALIBRACIÓN (mapeo absoluto cabeza -> pantalla)
+# GRAFO DE NAVEGACIÓN (cruceta + domótica como un solo mapa de saltos)
 # ============================================================
+#
+# La cruceta queda así en pantalla:
+#
+#     [   ..... AVANZAR ..... ]      <- avanzar_izq | avanzar_der (un solo
+#     [ IZQUIERDA | DERECHA   ]         botón, dos mitades conceptuales)
+#     [   ..... REGRESAR .... ]      <- regresar_izq | regresar_der
+#
+# Avanzar y Regresar ocupan todo el ancho, así que se dividen en dos
+# mitades conceptuales (mismo botón, dos puntos de destino distintos) para
+# que desde cualquiera de las dos se pueda bajar/subir directo a Izquierda
+# o a Derecha sin ambigüedad.
+#
+# Debajo sigue la domótica: 3 tarjetas por fila, cada una con Encender
+# (izquierda) / Apagar (derecha) — 6 "columnas" por fila. Regresar conecta
+# hacia abajo con la fila 1 (dom1..dom3); Avanzar es el techo, no baja a
+# nada.
 
-class Calibrador:
-    """
-    Recolecta 5 posturas de cabeza (centro + 4 extremos cómodos) para poder
-    mapear la orientación de la cabeza directo a un punto de pantalla, en
-    vez de usarla como acelerador de cursor.
-    """
+GRAFO_NAVEGACION = {
+    "avanzar_izq": {"derecha": "avanzar_der", "abajo": "izquierda"},
+    "avanzar_der": {"izquierda": "avanzar_izq", "abajo": "derecha"},
 
-    PUNTOS = ["centro", "izquierda", "derecha", "arriba", "abajo"]
-    ETIQUETAS = {
-        "centro": "Mira al frente, relajado",
-        "izquierda": "Gira la cabeza cómodamente a la izquierda",
-        "derecha": "Gira la cabeza cómodamente a la derecha",
-        "arriba": "Inclina la cabeza hacia arriba",
-        "abajo": "Inclina la cabeza hacia abajo",
-    }
+    "izquierda": {"arriba": "avanzar_izq", "abajo": "regresar_izq", "derecha": "derecha"},
+    "derecha": {"arriba": "avanzar_der", "abajo": "regresar_der", "izquierda": "izquierda"},
 
-    def __init__(self):
-        self.muestras = {}
+    "regresar_izq": {"arriba": "izquierda", "derecha": "regresar_der", "abajo": "dom1_on"},
+    "regresar_der": {"arriba": "derecha", "izquierda": "regresar_izq", "abajo": "dom3_off"},
 
-    def registrar(self, nombre, hx, hy):
-        self.muestras[nombre] = (float(hx), float(hy))
+    "dom1_on": {"arriba": "regresar_izq", "abajo": "dom4_on", "derecha": "dom1_off"},
+    "dom1_off": {"arriba": "regresar_izq", "abajo": "dom4_off", "izquierda": "dom1_on", "derecha": "dom2_on"},
+    "dom2_on": {"arriba": "regresar_izq", "abajo": "dom5_on", "izquierda": "dom1_off", "derecha": "dom2_off"},
+    "dom2_off": {"arriba": "regresar_der", "abajo": "dom5_off", "izquierda": "dom2_on", "derecha": "dom3_on"},
+    "dom3_on": {"arriba": "regresar_der", "abajo": "dom6_on", "izquierda": "dom2_off", "derecha": "dom3_off"},
+    "dom3_off": {"arriba": "regresar_der", "abajo": "dom6_off", "izquierda": "dom3_on"},
 
-    def completo(self):
-        return all(p in self.muestras for p in self.PUNTOS)
+    "dom4_on": {"arriba": "dom1_on", "derecha": "dom4_off"},
+    "dom4_off": {"arriba": "dom1_off", "izquierda": "dom4_on", "derecha": "dom5_on"},
+    "dom5_on": {"arriba": "dom2_on", "izquierda": "dom4_off", "derecha": "dom5_off"},
+    "dom5_off": {"arriba": "dom2_off", "izquierda": "dom5_on", "derecha": "dom6_on"},
+    "dom6_on": {"arriba": "dom3_on", "izquierda": "dom5_off", "derecha": "dom6_off"},
+    "dom6_off": {"arriba": "dom3_off", "izquierda": "dom6_on"},
+}
 
-    def guardar(self):
-        with open(RUTA_CALIBRACION, "w") as f:
-            json.dump(self.muestras, f, indent=2)
-        return self.muestras
+FOCO_INICIAL = "avanzar_izq"
 
-
-def cargar_calibracion():
-    """Dict de calibración guardado, o None si no existe / está incompleto."""
-    if not os.path.exists(RUTA_CALIBRACION):
-        return None
-    try:
-        with open(RUTA_CALIBRACION, "r") as f:
-            datos = json.load(f)
-        if all(p in datos for p in Calibrador.PUNTOS):
-            return datos
-    except (ValueError, OSError):
-        pass
-    return None
-
-
-def actualizar_centro(hx, hy):
-    """
-    Recalibra solo el punto "centro" (recentrado rápido), sin repetir los 4
-    extremos. Corrige el caso típico de que la postura neutral de la persona
-    se corra un poco durante la sesión (se acomoda en la silla, se cansa,
-    etc.) y el cursor termine pegado en un borde por ese desfase acumulado.
-    """
-    datos = cargar_calibracion()
-    if datos is None:
-        return False
-    datos["centro"] = [float(hx), float(hy)]
-    with open(RUTA_CALIBRACION, "w") as f:
-        json.dump(datos, f, indent=2)
-    return True
+ETIQUETAS_FOCO_BASE = {
+    "avanzar_izq": "Avanzar",
+    "avanzar_der": "Avanzar",
+    "izquierda": "Girar izquierda",
+    "derecha": "Girar derecha",
+    "regresar_izq": "Regresar",
+    "regresar_der": "Regresar",
+}
 
 
 class GazeStateController:
     """
     Traduce las bioseñales de OpenFace en acciones de mouse.
 
-    - Cabeza  -> posiciona el cursor.
-                 Con calibración guardada: apunta directo a un punto de
-                 pantalla (control por posición, como un mouse real).
-                 Sin calibración: modo anterior por velocidad (la cabeza
-                 acelera el cursor como un joystick), para no romper nada
-                 en equipos donde aún no se calibró.
-    - Boca    -> abrirla PRESIONA el clic y lo MANTIENE; cerrarla lo SUELTA.
+    - Cabeza  -> NO mueve un cursor libre y NO necesita calibración: cada
+                 gesto claro hacia arriba, abajo, izquierda o derecha (salir
+                 de la zona central y volver a ella) mueve el foco UN paso en
+                 el grafo de navegación (ver GRAFO_NAVEGACION) y
+                 teletransporta el cursor real al centro de ese botón. El
+                 "centro" de referencia se auto-ajusta solo, siguiendo la
+                 postura de descanso real de la persona.
+    - Boca    -> abrirla PRESIONA el clic y lo MANTIENE (sobre el botón
+                 donde está el foco); cerrarla lo SUELTA. Totalmente
+                 independiente de la navegación por gestos de arriba.
     - Ojos    -> cerrarlos `blink_hold_time` segundos pausa / reanuda el sistema.
     """
 
@@ -96,6 +85,14 @@ class GazeStateController:
         self.system_enabled = True
         self.blink_start_time = None
         self.blink_action_triggered = False
+
+        # Emergencia: ojos cerrados mucho más tiempo que el de pausa.
+        # `emergencia_disparada` evita repetir el evento cada frame mientras
+        # se sigue con los ojos cerrados; los otros dos son banderas de un
+        # solo frame para avisarle a main_app.py (se limpian en _estado()).
+        self.emergencia_disparada = False
+        self._emergencia_evento = False
+        self._emergencia_cancelar = False
 
         self.hx_suavizado = 0.0
         self.hy_suavizado = 0.0
@@ -108,25 +105,61 @@ class GazeStateController:
         self._ultimo_rostro_ok = time.time()
         self._puntos = []
 
-        # Imán hacia botones/tiles (asistencia de precisión)
-        self._objetivos = []       # lista de (cx, cy, radio) en coords. de pantalla
-        self._iman_activo = False
+        # Línea base de "boca cerrada en reposo", auto-ajustada (no un
+        # número fijo adivinado): la apertura real con la boca cerrada varía
+        # según la distancia a la cámara, el tamaño de cara, etc., así que
+        # los umbrales de clic se calculan como un margen POR ENCIMA de esta
+        # base, no como valores absolutos.
+        self._apertura_base = None
 
-        # Calibración para control por posición absoluta
-        self.calibracion = cargar_calibracion()
-        self.ancho_pantalla, self.alto_pantalla = tamano_pantalla()
+        # Navegación por saltos
+        self._nodos = {}                       # nodo -> (x, y) en pantalla
+        self._etiquetas_nodos = dict(ETIQUETAS_FOCO_BASE)
+        self._foco = FOCO_INICIAL
+        self._zona_anterior = "centro"
+
+        # "Centro" de referencia para los gestos, auto-ajustado (no requiere
+        # ningún paso de calibración): arranca igual que hx_suavizado/
+        # hy_suavizado (en 0.0, no en "lo que sea que traiga el primer
+        # frame" — si el primer frame ya trae parte de un gesto, el centro
+        # lo absorbería y ese umbral quedaría mal calibrado desde el
+        # arranque) y se va corrigiendo solo mientras la cabeza está en reposo.
+        self._centro_x = 0.0
+        self._centro_y = 0.0
+
+        # Pausa tras cada paso: da tiempo a que la cabeza regrese al centro
+        # antes de volver a evaluar gestos. `_tiempo_ultimo_paso` no-None
+        # significa "en pausa/esperando volver al centro".
+        self._tiempo_ultimo_paso = None
 
     # --------------------------------------------------------
-    # OBJETIVOS PARA EL IMÁN DE PRECISIÓN / CALIBRACIÓN
+    # NODOS DE NAVEGACIÓN (posiciones reales en pantalla)
     # --------------------------------------------------------
 
-    def set_objetivos(self, objetivos):
-        """Actualiza los botones "imantados" (cx, cy, radio) en coords. de pantalla."""
-        self._objetivos = objetivos or []
+    def set_nodos(self, nodos, etiquetas=None):
+        """`nodos`: {nombre_de_nodo: (x, y)} con la posición real en pantalla
+        de cada botón/mitad de botón. `etiquetas`: nombres legibles extra
+        (p. ej. los de domótica, que dependen de qué dispositivo esté
+        conectado a cada tarjeta)."""
+        self._nodos = nodos or {}
+        self._etiquetas_nodos = dict(ETIQUETAS_FOCO_BASE)
+        self._etiquetas_nodos.update(etiquetas or {})
+        self._teleportar_cursor()
 
-    def recargar_calibracion(self):
-        """Vuelve a leer calibracion.json (se llama al terminar el asistente)."""
-        self.calibracion = cargar_calibracion()
+    def _teleportar_cursor(self):
+        punto = self._nodos.get(self._foco)
+        if punto:
+            mover_cursor_absoluto(*punto)
+
+    def recentrar(self):
+        """Fuerza el "centro" de referencia a la postura actual ya mismo, y
+        regresa el foco a Avanzar. Útil si los gestos empiezan a sentirse
+        desalineados (la persona se acomodó, se cansó, etc.)."""
+        self._centro_x, self._centro_y = self.hx_suavizado, self.hy_suavizado
+        self._zona_anterior = "centro"
+        self._foco = FOCO_INICIAL
+        self._tiempo_ultimo_paso = None
+        self._teleportar_cursor()
 
     # --------------------------------------------------------
     # CLIC SOSTENIDO
@@ -147,12 +180,25 @@ class GazeStateController:
         self._frames_cerrada = 0
 
     def _actualizar_boca(self, apertura):
-        umbral_on = config.get("boca_threshold", 25.0)
-        # Histéresis: se suelta con un umbral más bajo para evitar parpadeos del clic
-        umbral_off = config.get("boca_threshold_release", umbral_on * 0.8)
+        if self._apertura_base is None:
+            self._apertura_base = apertura
+
+        # Umbrales como margen por encima de la boca cerrada real de esta
+        # persona (auto-ajustada), no números absolutos que rara vez
+        # coinciden exactos con la cámara/distancia real de cada quien.
+        delta_on = config.get("boca_delta_on", 15.0)
+        delta_off = config.get("boca_delta_off", 6.0)
+        umbral_on = self._apertura_base + delta_on
+        umbral_off = self._apertura_base + delta_off
         frames_req = int(config.get("boca_frames", 2))
 
         if not self.clic_mantenido:
+            # Solo se adapta la base mientras la boca está claramente cerrada
+            # (bien por debajo del umbral de soltar) — sigue el reposo real
+            # sin "perseguir" una boca que ya se está empezando a abrir.
+            if apertura < umbral_off:
+                alpha_base = config.get("boca_base_alpha", 0.02)
+                self._apertura_base += alpha_base * (apertura - self._apertura_base)
             self._frames_abierta = self._frames_abierta + 1 if apertura > umbral_on else 0
             if self._frames_abierta >= frames_req:
                 self._presionar()
@@ -165,18 +211,25 @@ class GazeStateController:
     # ESTADO PARA LA INTERFAZ
     # --------------------------------------------------------
 
-    def _estado(self, rostro, direccion=""):
+    def _estado(self, rostro):
+        base = self._apertura_base if self._apertura_base is not None else self.ultima_apertura
+        emergencia_evento = self._emergencia_evento
+        emergencia_cancelar = self._emergencia_cancelar
+        self._emergencia_evento = False
+        self._emergencia_cancelar = False
         return {
             "sistema": self.system_enabled,
             "rostro": rostro,
             "clic": self.clic_mantenido,
             "apertura": self.ultima_apertura,
+            "boca_umbral": base + config.get("boca_delta_on", 15.0),
             "hx": self.hx_suavizado,
             "hy": self.hy_suavizado,
-            "direccion": direccion or "CENTRO",
+            "direccion": self._etiquetas_nodos.get(self._foco, self._foco).upper(),
+            "foco": self._foco,
+            "emergencia": emergencia_evento,
+            "emergencia_cancelar": emergencia_cancelar,
             "puntos": self._puntos,
-            "iman": self._iman_activo,
-            "calibrado": self.calibracion is not None,
         }
 
     # --------------------------------------------------------
@@ -196,9 +249,22 @@ class GazeStateController:
             return self._estado(rostro=False)
 
         self._ultimo_rostro_ok = current_time
-        is_eyes_closed = (au45_c >= 1.0)
 
-        # 1. MECANISMO DE PAUSA (ojos cerrados)
+        # Apertura de boca, calculada antes del mecanismo de pausa: al abrir
+        # la boca, OpenFace a veces malinterpreta la forma de la cara y da
+        # falsos positivos en el AU45 (ojos cerrados) — así que mientras la
+        # boca esté abierta, NO cuenta como parpadeo para pausar el sistema.
+        self.ultima_apertura = y_57 - y_51
+        if self._apertura_base is not None:
+            umbral_boca_abierta = self._apertura_base + config.get("boca_delta_off", 6.0)
+            boca_abierta_ahora = self.ultima_apertura > umbral_boca_abierta
+        else:
+            boca_abierta_ahora = False  # todavía no se conoce la base (primer frame)
+        is_eyes_closed = (au45_c >= 1.0) and not boca_abierta_ahora
+
+        # 1. MECANISMO DE PAUSA (ojos cerrados) + EMERGENCIA (ojos cerrados
+        # mucho más tiempo, un umbral bien separado del de pausa para que no
+        # se confundan).
         if is_eyes_closed:
             if self.blink_start_time is None:
                 self.blink_start_time = current_time
@@ -209,185 +275,129 @@ class GazeStateController:
                 self.blink_action_triggered = True
                 if not self.system_enabled:
                     self.soltar()
-                estado = "Activado" if self.system_enabled else "Pausado"
-                hablar_en_segundo_plano(f"Sistema {estado}")
+                    hablar_en_segundo_plano("Sistema pausado")
+                else:
+                    # En este instante los ojos siguen cerrados (recién se
+                    # cumplió el tiempo sostenido) y el sistema ya está
+                    # activo de nuevo — sin este aviso, la persona no sabe
+                    # que ya puede (y debe) abrir los ojos, y si los sigue
+                    # cerrando por costumbre puede volver a pausar el sistema
+                    # sin querer al cumplirse otro `blink_hold_time`.
+                    hablar_en_segundo_plano("Sistema activado. Abre los ojos.")
+
+            tiempo_emergencia = config.get("emergencia_hold_time", 10.0)
+            if elapsed >= tiempo_emergencia and not self.emergencia_disparada:
+                self.emergencia_disparada = True
+                self._emergencia_evento = True
         else:
             self.blink_start_time = None
             self.blink_action_triggered = False
+            if self.emergencia_disparada:
+                self.emergencia_disparada = False
+                self._emergencia_cancelar = True
 
         if not self.system_enabled:
             return self._estado(rostro=True)
 
-        # 2. CLIC SOSTENIDO POR BOCA
-        self.ultima_apertura = y_57 - y_51
+        # 2. CLIC SOSTENIDO POR BOCA (sobre el botón donde está el foco) —
+        # totalmente independiente de la navegación del paso 4.
         self._actualizar_boca(self.ultima_apertura)
 
-        # 3. SUAVIZADO EMA PARA LA CABEZA
+        # 3. SUAVIZADO EMA LIGERO (solo para no reaccionar a un frame suelto con ruido)
         alpha = config.get("suavizado_alpha", 0.2)
         self.hx_suavizado = (alpha * hx) + ((1 - alpha) * self.hx_suavizado)
         self.hy_suavizado = (alpha * hy) + ((1 - alpha) * self.hy_suavizado)
 
-        # 4. POSICIÓN DEL CURSOR (el cursor se mueve aunque el clic esté presionado)
-        if self.calibracion:
-            x, y = self._posicion_absoluta(self.hx_suavizado, self.hy_suavizado)
-            x, y = self._aplicar_iman_absoluto(x, y)
-            mover_cursor_absoluto(x, y)
-            x_dir, y_dir = self._direccion_absoluta(self.hx_suavizado, self.hy_suavizado)
-        else:
-            dx, dy, x_dir, y_dir = self.calcular_movimiento(self.hx_suavizado, self.hy_suavizado)
-            mover_cursor(dx, dy)
+        # 4. NAVEGACIÓN POR SALTOS (solo cabeza, sin gestos adicionales)
+        self._actualizar_navegacion(self.hx_suavizado, self.hy_suavizado, current_time)
 
-        return self._estado(rostro=True, direccion=f"{y_dir} {x_dir}".strip())
+        return self._estado(rostro=True)
 
     # ==========================================================
-    # MODO POR POSICIÓN ABSOLUTA (requiere calibración)
+    # NAVEGACIÓN POR SALTOS (gesto de cabeza -> un paso en el grafo)
     # ==========================================================
 
-    def _interpolar_eje(self, valor, v_centro, v_min, v_max):
+    def _umbrales(self):
+        """Umbral de gesto POR DIRECCIÓN (no compartido entre arriba/abajo ni
+        izquierda/derecha): la cámara no responde igual de sensible en los
+        dos sentidos de un mismo eje (ángulo de montaje, postura habitual
+        frente a la pantalla, etc.), así que cada rumbo se ajusta aparte."""
+        xt = config.get("navegacion_umbral_x", config.get("x_threshold", 0.06))
+        yt = config.get("navegacion_umbral_y", config.get("y_threshold", 0.05))
+        return {
+            "izquierda": config.get("navegacion_umbral_izquierda", xt),
+            "derecha": config.get("navegacion_umbral_derecha", xt),
+            "arriba": config.get("navegacion_umbral_arriba", yt),
+            "abajo": config.get("navegacion_umbral_abajo", yt),
+        }
+
+    def _zona_actual(self, dx, dy, umbrales):
         """
-        Convierte un ángulo de cabeza a un valor normalizado en [-1, 1]
-        usando el centro y los extremos cómodos DE ESA PERSONA (no un
-        umbral genérico), así el mapeo se ajusta a su rango real de movimiento.
-
-        Se agrega un margen (`calibracion_margen`) más allá de cada extremo
-        calibrado: llegar exactamente al punto que se registró en la
-        calibración no pega el cursor al 100% del borde de inmediato, solo
-        si la cabeza va un poco más allá. Sin esto, cualquier variación
-        normal (la postura de calibración casi nunca es idéntica a como se
-        mueve la persona en el uso real) deja el cursor trabado en un borde.
+        En qué dirección está apuntando la cabeza AHORA respecto al centro
+        de referencia, como fracción del umbral de ESA dirección (0 = en el
+        centro, 1 = ya cruzó el umbral). Usa histéresis: una vez que cuenta
+        como "hacia la izquierda" (p. ej.), sigue contando como tal hasta que
+        la cabeza vuelve bastante cerca del centro — así no dispara un
+        segundo paso por quedarse justo en el borde del umbral.
         """
-        margen = 1 + config.get("calibracion_margen", 0.15)
-        if valor >= v_centro:
-            rango = ((v_max - v_centro) * margen) or 1e-6
-            t = (valor - v_centro) / rango
-        else:
-            rango = ((v_centro - v_min) * margen) or 1e-6
-            t = (valor - v_centro) / rango
-        return max(-1.0, min(1.0, t))
+        fracciones = {
+            "izquierda": max(0.0, -dx / umbrales["izquierda"]),
+            "derecha": max(0.0, dx / umbrales["derecha"]),
+            "arriba": max(0.0, -dy / umbrales["arriba"]),
+            "abajo": max(0.0, dy / umbrales["abajo"]),
+        }
 
-    def _posicion_absoluta(self, hx, hy):
-        centro_x, centro_y = self.calibracion["centro"]
-        izq_x, _ = self.calibracion["izquierda"]
-        der_x, _ = self.calibracion["derecha"]
-        _, arriba_y = self.calibracion["arriba"]
-        _, abajo_y = self.calibracion["abajo"]
+        umbral_entrada = config.get("navegacion_histeresis", 0.55)
+        if self._zona_anterior != "centro" and fracciones.get(self._zona_anterior, 0.0) >= umbral_entrada:
+            return self._zona_anterior
 
-        # Curva de precisión: da más resolución de pantalla por grado de
-        # cabeza cerca del centro (gamma > 1), sin perder alcance a los
-        # bordes. gamma = 1 sería un mapeo lineal puro.
-        gamma = config.get("curva_precision", 1.3)
+        direccion, fraccion = max(fracciones.items(), key=lambda kv: kv[1])
+        return direccion if fraccion >= 1.0 else "centro"
 
-        nx = self._interpolar_eje(hx, centro_x, izq_x, der_x)
-        ny = self._interpolar_eje(hy, centro_y, arriba_y, abajo_y)
+    def _actualizar_navegacion(self, hx, hy, current_time):
+        umbrales = self._umbrales()
+        margen_x = min(umbrales["izquierda"], umbrales["derecha"]) * 0.6
+        margen_y = min(umbrales["arriba"], umbrales["abajo"]) * 0.6
 
-        nx = (abs(nx) ** gamma) * (1 if nx >= 0 else -1)
-        ny = (abs(ny) ** gamma) * (1 if ny >= 0 else -1)
+        # Pausa tras cada paso: `navegacion_pausa_seg` es un MÍNIMO, no un
+        # reloj fijo. Cumplido ese mínimo, solo se recentra cuando la cabeza
+        # ya está de verdad cerca del centro ANTERIOR — si todavía no
+        # regresó, se sigue esperando en vez de adoptar una posición todavía
+        # desviada como si fuera neutral (eso hacía que terminar de volver
+        # al centro se leyera como un gesto hacia el lado contrario).
+        if self._tiempo_ultimo_paso is not None:
+            transcurrido = current_time - self._tiempo_ultimo_paso
+            dx_anterior = hx - self._centro_x
+            dy_anterior = hy - self._centro_y
+            if transcurrido < config.get("navegacion_pausa_seg", 0.5):
+                return
+            if abs(dx_anterior) >= margen_x or abs(dy_anterior) >= margen_y:
+                return  # ya pasó el mínimo, pero la cabeza aún no volvió: seguir esperando
+            self._centro_x, self._centro_y = hx, hy
+            self._zona_anterior = "centro"
+            self._tiempo_ultimo_paso = None
 
-        x = (self.ancho_pantalla / 2) + nx * (self.ancho_pantalla / 2)
-        y = (self.alto_pantalla / 2) + ny * (self.alto_pantalla / 2)
-        return (
-            max(0, min(self.ancho_pantalla - 1, x)),
-            max(0, min(self.alto_pantalla - 1, y)),
-        )
+        dx = hx - self._centro_x
+        dy = hy - self._centro_y
 
-    def _direccion_absoluta(self, hx, hy):
-        """Solo para la etiqueta informativa de la interfaz (CABEZA: ...)."""
-        centro_x, centro_y = self.calibracion["centro"]
-        umbral_x = abs(self.calibracion["derecha"][0] - centro_x) * 0.15
-        umbral_y = abs(self.calibracion["abajo"][1] - centro_y) * 0.15
-        x_dir = y_dir = ""
-        if abs(hx - centro_x) > umbral_x:
-            x_dir = "DERECHA" if hx > centro_x else "IZQUIERDA"
-        if abs(hy - centro_y) > umbral_y:
-            y_dir = "ABAJO" if hy > centro_y else "ARRIBA"
-        return x_dir, y_dir
+        # El centro se auto-ajusta lentamente, pero SOLO mientras la cabeza
+        # ya está en reposo (no en medio de un gesto) — así sigue la postura
+        # neutral real de la persona sin pedir calibración, y sin "perseguir"
+        # un gesto en curso y evitar que cruce el umbral.
+        if self._zona_anterior == "centro" and abs(dx) < margen_x and abs(dy) < margen_y:
+            alpha_centro = config.get("navegacion_centro_alpha", 0.01)
+            self._centro_x += alpha_centro * (hx - self._centro_x)
+            self._centro_y += alpha_centro * (hy - self._centro_y)
 
-    def _aplicar_iman_absoluto(self, x, y):
-        """
-        Igual que _aplicar_iman pero para el modo de posición: en vez de
-        frenar velocidad, acerca el punto de destino hacia el centro del
-        botón más cercano cuando el punto calculado ya cayó dentro de su radio.
-        """
-        self._iman_activo = False
-        if not self._objetivos:
-            return x, y
+        zona = self._zona_actual(dx, dy, umbrales)
+        if zona != "centro" and self._zona_anterior == "centro":
+            self._mover_foco(zona)
+            self._tiempo_ultimo_paso = current_time
+        self._zona_anterior = zona
 
-        radio_iman = config.get("iman_radio", 90)
-        factor_min = config.get("iman_factor", 0.35)
-
-        for cx, cy, radio in self._objetivos:
-            radio_efectivo = radio + radio_iman
-            dist = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
-            if dist < radio_efectivo:
-                t = max(0.0, min(1.0, dist / radio_efectivo))
-                atraccion = (1 - factor_min) * (1 - t)  # más fuerte cerca del centro
-                self._iman_activo = True
-                return x + (cx - x) * atraccion, y + (cy - y) * atraccion
-
-        return x, y
-
-    # ==========================================================
-    # MODO POR VELOCIDAD (respaldo, se usa solo sin calibración)
-    # ==========================================================
-
-    def calcular_movimiento(self, hx, hy):
-        velocidad_base = config.get("mouse_speed", 5)
-        limite_multiplicador = 25.0  # Límite para poder cruzar una pantalla 2K
-
-        dx = 0.0
-        dy = 0.0
-        x_dir = ""
-        y_dir = ""
-
-        xt, yt = config["x_threshold"], config["y_threshold"]
-
-        # Eje X (giro de cuello). El multiplicador arranca en 0 justo al cruzar
-        # el umbral y crece cuadráticamente, en vez de saltar de golpe a
-        # velocidad_base: así el primer instante tras salir de la zona muerta
-        # es controlable y no un "brinco" del cursor.
-        if abs(hx) > xt:
-            exceso = (abs(hx) - xt) / xt
-            multiplicador = min(exceso ** 2, limite_multiplicador)
-            dx = velocidad_base * multiplicador * (1 if hx > 0 else -1)
-            x_dir = "DERECHA" if hx > 0 else "IZQUIERDA"
-
-        # Eje Y (inclinación de cráneo), misma rampa suave.
-        if abs(hy) > yt:
-            exceso = (abs(hy) - yt) / yt
-            multiplicador = min(exceso ** 2, limite_multiplicador)
-            dy = velocidad_base * multiplicador * (1 if hy > 0 else -1)
-            y_dir = "ABAJO" if hy > 0 else "ARRIBA"
-
-        dx, dy = self._aplicar_iman(dx, dy)
-
-        return dx, dy, x_dir, y_dir
-
-    def _aplicar_iman(self, dx, dy):
-        """
-        Frena el cursor cuando se acerca a un botón registrado, para que
-        acertar un tile no dependa de apuntar con precisión milimétrica con
-        la cabeza. No cambia la dirección, solo amortigua la velocidad.
-        """
-        self._iman_activo = False
-        if not self._objetivos or (dx == 0.0 and dy == 0.0):
-            return dx, dy
-
-        radio_iman = config.get("iman_radio", 90)
-        factor_min = config.get("iman_factor", 0.35)
-
-        try:
-            x, y = posicion_cursor()
-        except Exception:
-            return dx, dy
-
-        nx, ny = x + dx, y + dy
-        for cx, cy, radio in self._objetivos:
-            radio_efectivo = radio + radio_iman
-            dist = ((nx - cx) ** 2 + (ny - cy) ** 2) ** 0.5
-            if dist < radio_efectivo:
-                t = max(0.0, min(1.0, dist / radio_efectivo))
-                amortiguacion = factor_min + (1 - factor_min) * t
-                self._iman_activo = True
-                return dx * amortiguacion, dy * amortiguacion
-
-        return dx, dy
+    def _mover_foco(self, direccion):
+        vecino = GRAFO_NAVEGACION.get(self._foco, {}).get(direccion)
+        if vecino is None:
+            return  # no hay nada en esa dirección desde aquí; se queda
+        self._foco = vecino
+        self._teleportar_cursor()

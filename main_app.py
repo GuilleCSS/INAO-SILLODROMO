@@ -2,7 +2,6 @@ import os
 import sys
 import json
 import time
-from collections import deque
 
 # Trabajar siempre desde la carpeta del proyecto (config.json, interfaz.ui, modulos/)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -13,14 +12,13 @@ if BASE_DIR not in sys.path:
 import cv2
 from PyQt5 import uic
 from PyQt5.QtWidgets import QApplication, QMainWindow, QShortcut
-from PyQt5.QtCore import Qt, QThread, QTimer, QTime, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, QTimer, QTime, QPoint, pyqtSignal
 from PyQt5.QtGui import QKeySequence, QImage
 
 from modulos.mediapipe_reader import generador_mediapipe
-from modulos.gaze_controller import GazeStateController, actualizar_centro
+from modulos.gaze_controller import GazeStateController
 from modulos.hardware_serial import DomoticaController
 from modulos.voice_synth import hablar_en_segundo_plano
-from modulos.calibracion_ui import DialogoCalibracion
 
 
 # ============================================================
@@ -32,14 +30,15 @@ with open("config.json", "r") as f:
 
 RUTA_UI = os.path.join(BASE_DIR, "interfaz.ui")
 
-# (texto en pantalla, nombre que se le dice a Alexa)
+# (texto en pantalla, nombre que se le dice a Alexa, comando extra opcional
+#  que se manda justo después de "Alexa, enciende {nombre}")
 DISPOSITIVOS = [
-    ("Enchufe 2", "enchufe dos"),
-    ("Enchufe 3", "enchufe tres"),
-    ("Secadora 1", "secadora uno"),
-    ("Ventilador 2", "ventilador dos"),
-    ("Alexa 2", "Alexa dos"),
-    ("Cafetera 2", "cafetera dos"),
+    ("Enchufe 2", "enchufe dos", None),
+    ("Enchufe 3", "enchufe tres", None),
+    ("Foco 1", "foco uno", None),
+    ("Ventilador 2", "ventilador dos", None),
+    ("Alexa 2", "Alexa dos", None),
+    ("Fire TV", "Fire TV", "abre Netflix en Fire TV"),
 ]
 
 # movimiento -> (texto, método de DomoticaController)
@@ -118,21 +117,20 @@ class ControlCentral(QMainWindow):
         )
         self.movimiento_actual = None
         self._ultimo_frame = None
-        self._ultimo_hx = 0.0
-        self._ultimo_hy = 0.0
-        self._historial_hxhy = deque(maxlen=45)  # ~1.5 s, para el recentrado rápido
-        self._dialogo_calibracion = None
+        self._emergencia_activa = False
+        self._emergencia_luz_encendida = False
+        self.timer_emergencia = QTimer(self)
+        self.timer_emergencia.timeout.connect(self._pulso_emergencia)
 
         self._configurar_movimiento()
         self._configurar_domotica()
-        self._configurar_calibracion()
         self._configurar_estado_inicial()
+        self.btnRecentrar.clicked.connect(self.recentrar_cursor)
 
         # ---------- Visión ----------
         self.hilo = HiloProcesamiento()
         self.hilo.senal_mensaje.connect(self.mostrar_mensaje)
-        self.hilo.senal_listo.connect(self._recalcular_objetivos_iman)
-        self.hilo.senal_listo.connect(self.abrir_calibracion)
+        self.hilo.senal_listo.connect(self._recalcular_nodos_navegacion)
         self.hilo.senal_estado.connect(self.actualizar_estado)
         self.hilo.senal_frame.connect(self._frame_camara)
         self.hilo.start()
@@ -150,46 +148,63 @@ class ControlCentral(QMainWindow):
         # ---------- Atajos (para quien acompaña al usuario) ----------
         QShortcut(QKeySequence(Qt.Key_Escape), self, activated=self.close)
         QShortcut(QKeySequence(Qt.Key_Space), self, activated=self.detener_movimiento)
-        QShortcut(QKeySequence("Ctrl+K"), self, activated=self.abrir_calibracion)
         QShortcut(QKeySequence("Ctrl+R"), self, activated=self.recentrar_cursor)
+        QShortcut(QKeySequence("Ctrl+E"), self, activated=self.cancelar_emergencia)
 
     # --------------------------------------------------------
     # CONFIGURACIÓN DE LA INTERFAZ
     # --------------------------------------------------------
 
-    def _configurar_calibracion(self):
-        self.btnCalibrar.clicked.connect(self.abrir_calibracion)
-
-    def abrir_calibracion(self):
-        self.detener_movimiento()
-        dialogo = DialogoCalibracion(self)
-        self._dialogo_calibracion = dialogo
-        dialogo.actualizar_lectura(self._ultimo_hx, self._ultimo_hy)
-        dialogo.exec_()
-        self._dialogo_calibracion = None
-
-        if dialogo.guardado:
-            if self.hilo.controller:
-                self.hilo.controller.recargar_calibracion()
-            self.mostrar_mensaje("Calibración guardada: el cursor ahora apunta directo a la pantalla")
-            hablar_en_segundo_plano("Calibración completada")
-
     def recentrar_cursor(self):
-        """Recalibra solo el 'centro' con la postura actual (promedio de ~1.5 s),
-        sin repetir los 4 extremos. Corrige que el cursor se quede pegado en un
-        borde cuando la postura neutral se corrió durante la sesión."""
-        if len(self._historial_hxhy) < 10:
-            self.mostrar_mensaje("Recentrar: espera un momento con la cara detectada e inténtalo de nuevo")
-            return
-        hx = sum(p[0] for p in self._historial_hxhy) / len(self._historial_hxhy)
-        hy = sum(p[1] for p in self._historial_hxhy) / len(self._historial_hxhy)
-        if actualizar_centro(hx, hy):
-            if self.hilo.controller:
-                self.hilo.controller.recargar_calibracion()
-            self.mostrar_mensaje("Centro del cursor recalibrado")
+        """Fuerza el centro de referencia de los gestos a la postura actual y
+        regresa el foco a Avanzar. Útil si los gestos empiezan a sentirse
+        desalineados (se disparan solos, o cuesta más de lo normal) tras
+        acomodarse o cansarse durante la sesión. No hace falta calibrar nada
+        de antemano — la navegación por gestos ya se auto-ajusta sola."""
+        if self.hilo.controller:
+            self.hilo.controller.recentrar()
+            self.mostrar_mensaje("Centro de gestos recalibrado")
             hablar_en_segundo_plano("Centro actualizado")
-        else:
-            self.mostrar_mensaje("Recentrar: primero completa la calibración con Ctrl+K")
+
+    # --------------------------------------------------------
+    # EMERGENCIA (ojos cerrados sostenidos mucho más tiempo que el de pausa)
+    # --------------------------------------------------------
+
+    def activar_emergencia(self):
+        """Suena una alarma repetida y parpadea una luz, hasta que se cancele
+        (abrir los ojos, o Ctrl+E para quien acompaña)."""
+        if self._emergencia_activa:
+            return
+        self._emergencia_activa = True
+        self._chip(self.chipSistema, "🚨 EMERGENCIA", "error")
+        self.mostrar_mensaje("Emergencia activada: se necesita ayuda")
+        self._pulso_emergencia()
+        self.timer_emergencia.start(int(config.get("emergencia_intervalo_seg", 3.0) * 1000))
+
+    def _pulso_emergencia(self):
+        """Un "tic" de la alarma: repite el aviso hablado y alterna la luz."""
+        hablar_en_segundo_plano(config.get("emergencia_mensaje", "Emergencia. Se necesita ayuda."))
+
+        dispositivo = config.get("emergencia_dispositivo_voz", "foco uno")
+        self._emergencia_luz_encendida = not self._emergencia_luz_encendida
+        accion = "enciende" if self._emergencia_luz_encendida else "apaga"
+        hablar_en_segundo_plano(f"Alexa, {accion} {dispositivo}")
+
+    def cancelar_emergencia(self):
+        """Detiene la alarma. Se llama sola al abrir los ojos, o con Ctrl+E
+        si quien acompaña necesita pararla manualmente."""
+        if not self._emergencia_activa:
+            return
+        self._emergencia_activa = False
+        self.timer_emergencia.stop()
+        if self._emergencia_luz_encendida:
+            # No dejar la luz de emergencia encendida al cancelar.
+            dispositivo = config.get("emergencia_dispositivo_voz", "foco uno")
+            hablar_en_segundo_plano(f"Alexa, apaga {dispositivo}")
+            self._emergencia_luz_encendida = False
+        self._chip(self.chipSistema, "Sistema activo", "ok")
+        self.mostrar_mensaje("Emergencia cancelada")
+        hablar_en_segundo_plano("Emergencia cancelada")
 
     def _configurar_movimiento(self):
         self.botones_movimiento = {
@@ -205,7 +220,7 @@ class ControlCentral(QMainWindow):
 
     def _configurar_domotica(self):
         self.tarjetas = []
-        for i, (visual, voz) in enumerate(DISPOSITIVOS, start=1):
+        for i, (visual, voz, extra) in enumerate(DISPOSITIVOS, start=1):
             tarjeta = {
                 "nombre": visual,
                 "frame": getattr(self, f"tarjeta_{i}"),
@@ -213,7 +228,7 @@ class ControlCentral(QMainWindow):
             }
             getattr(self, f"lbl_disp_{i}").setText(visual)
             getattr(self, f"btn_on_{i}").clicked.connect(
-                lambda _=False, t=tarjeta, v=voz: self.encender_dispositivo(t, v))
+                lambda _=False, t=tarjeta, v=voz, ex=extra: self.encender_dispositivo(t, v, ex))
             getattr(self, f"btn_off_{i}").clicked.connect(
                 lambda _=False, t=tarjeta, v=voz: self.apagar_dispositivo(t, v))
             self.tarjetas.append(tarjeta)
@@ -229,43 +244,52 @@ class ControlCentral(QMainWindow):
             self.mostrar_mensaje(f"Silla en simulación: no se pudo abrir {puerto}")
         self._chip(self.chipSistema, "Iniciando…", "warn")
         self.lblAyuda.setText(
-            "Cabeza: mover cursor   ·   Boca abierta: clic sostenido   ·   "
+            "Cabeza: gesto arriba/abajo/izq/der mueve el foco un botón (no hace falta calibrar)   ·   "
+            "Boca abierta: clic sostenido   ·   "
             f"Ojos cerrados {config.get('blink_hold_time', 3.5):g} s: pausar   ·   "
-            "Punto verde en CABEZA: imán activo cerca de un botón   ·   "
-            "La calibración corre sola al iniciar   ·   "
-            "Botón Calibrar (o Ctrl+K): repetirla si hace falta   ·   "
-            "Ctrl+R: recentrar si el cursor se queda pegado en un borde"
+            f"Ojos cerrados {config.get('emergencia_hold_time', 10.0):g} s: alarma de emergencia (Ctrl+E cancela)   ·   "
+            "Botón Recentrar (o Ctrl+R): si los gestos se sienten desalineados"
         )
 
     # --------------------------------------------------------
-    # IMÁN DE PRECISIÓN (asiste al cursor cerca de los botones)
+    # NODOS DE NAVEGACIÓN (dónde teletransportar el cursor por cada foco)
     # --------------------------------------------------------
 
-    def _recalcular_objetivos_iman(self):
-        """Informa a GazeStateController dónde están los botones en pantalla
-        para que el cursor se frene al acercarse (más fácil de acertar)."""
+    def _recalcular_nodos_navegacion(self):
+        """Informa a GazeStateController la posición real en pantalla de cada
+        botón (o mitad de botón) del grafo de navegación, para que pueda
+        teletransportar el cursor ahí cuando el foco avanza un paso."""
         hilo = getattr(self, "hilo", None)
         if not hilo or not hilo.controller:
             return
-        botones = list(self.botones_movimiento.values())
-        for i in range(1, len(DISPOSITIVOS) + 1):
-            botones.append(getattr(self, f"btn_on_{i}"))
-            botones.append(getattr(self, f"btn_off_{i}"))
 
-        objetivos = []
-        for btn in botones:
-            rect = btn.rect()
-            if rect.width() <= 0 or rect.height() <= 0:
-                continue
-            centro = btn.mapToGlobal(rect.center())
-            radio = min(rect.width(), rect.height()) / 2
-            objetivos.append((centro.x(), centro.y(), radio))
-        hilo.controller.set_objetivos(objetivos)
+        def punto(btn, fx=0.5, fy=0.5):
+            r = btn.rect()
+            p = btn.mapToGlobal(QPoint(int(r.width() * fx), int(r.height() * fy)))
+            return (p.x(), p.y())
+
+        nodos = {
+            "avanzar_izq": punto(self.btn_avanzar, 0.25),
+            "avanzar_der": punto(self.btn_avanzar, 0.75),
+            "izquierda": punto(self.btn_girar_izq),
+            "derecha": punto(self.btn_girar_der),
+            "regresar_izq": punto(self.btn_regresar, 0.25),
+            "regresar_der": punto(self.btn_regresar, 0.75),
+        }
+
+        etiquetas = {}
+        for i, tarjeta in enumerate(self.tarjetas, start=1):
+            nodos[f"dom{i}_on"] = punto(getattr(self, f"btn_on_{i}"))
+            nodos[f"dom{i}_off"] = punto(getattr(self, f"btn_off_{i}"))
+            etiquetas[f"dom{i}_on"] = f"{tarjeta['nombre']} · Encender"
+            etiquetas[f"dom{i}_off"] = f"{tarjeta['nombre']} · Apagar"
+
+        hilo.controller.set_nodos(nodos, etiquetas)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         # Los botones cambian de posición al reacomodarse el layout.
-        QTimer.singleShot(50, self._recalcular_objetivos_iman)
+        QTimer.singleShot(50, self._recalcular_nodos_navegacion)
 
     # --------------------------------------------------------
     # ESTILOS DINÁMICOS (propiedades usadas por el QSS del .ui)
@@ -340,8 +364,13 @@ class ControlCentral(QMainWindow):
     # DOMÓTICA
     # --------------------------------------------------------
 
-    def encender_dispositivo(self, tarjeta, nombre_voz):
+    def encender_dispositivo(self, tarjeta, nombre_voz, comando_extra=None):
         hablar_en_segundo_plano(f"Alexa, enciende {nombre_voz}")
+        if comando_extra:
+            # Se encola después (voice_synth.py ya reproduce en orden, sin
+            # pisarse), así "enciende Fire TV" sale primero y "abre Netflix"
+            # después, no al mismo tiempo.
+            hablar_en_segundo_plano(f"Alexa, {comando_extra}")
         self._marcar_tarjeta(tarjeta, True)
         self.mostrar_mensaje(f"Encendiendo: {tarjeta['nombre']}")
 
@@ -359,13 +388,17 @@ class ControlCentral(QMainWindow):
 
     def actualizar_estado(self, e):
         self._ultimo_frame = time.time()
-        self._ultimo_hx, self._ultimo_hy = e["hx"], e["hy"]
-        self._historial_hxhy.append((e["hx"], e["hy"]))
-        if self._dialogo_calibracion is not None:
-            self._dialogo_calibracion.actualizar_lectura(e["hx"], e["hy"])
+
+        if e.get("emergencia"):
+            self.activar_emergencia()
+        if e.get("emergencia_cancelar"):
+            self.cancelar_emergencia()
+
         activo = e["rostro"] and e["sistema"]
 
-        if not e["rostro"]:
+        if self._emergencia_activa:
+            pass  # el chip lo controla activar/cancelar_emergencia, no lo pises aquí
+        elif not e["rostro"]:
             self._chip(self.chipSistema, "Rostro no detectado", "error")
         elif not e["sistema"]:
             self._chip(self.chipSistema, "Pausado", "warn")
@@ -373,8 +406,8 @@ class ControlCentral(QMainWindow):
             self._chip(self.chipSistema, "Sistema activo", "ok")
 
         self.vistaCamara.set_estado(e)
-        self.indCabeza.actualizar(e["hx"], e["hy"], activo, e.get("iman", False))
-        self.indBoca.actualizar(e["apertura"], e["clic"])
+        self.indCabeza.actualizar(e["hx"], e["hy"], activo)
+        self.indBoca.actualizar(e["apertura"], e["clic"], e.get("boca_umbral"))
         self.lblDireccion.setText(e["direccion"] if activo else "—")
 
     def _tick_reloj(self):
@@ -385,6 +418,7 @@ class ControlCentral(QMainWindow):
     # --------------------------------------------------------
 
     def closeEvent(self, event):
+        self.timer_emergencia.stop()
         self.detener_movimiento()
         self.hilo.detener()
         self.hilo.wait(500)

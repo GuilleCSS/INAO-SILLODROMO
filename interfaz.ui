@@ -135,7 +135,7 @@ QLabel#label_estado {
     font-weight: 600;
 }
 /* ---------- Botón calibrar ---------- */
-QPushButton#btnCalibrar {
+QPushButton#btnRecentrar {
     padding: 7px 16px;
     border-radius: 17px;
     font-size: 14px;
@@ -144,11 +144,11 @@ QPushButton#btnCalibrar {
     background-color: rgba(34, 211, 238, 25);
     border: 1px solid rgba(34, 211, 238, 130);
 }
-QPushButton#btnCalibrar:hover {
+QPushButton#btnRecentrar:hover {
     background-color: rgba(34, 211, 238, 55);
     border: 1px solid #22D3EE;
 }
-QPushButton#btnCalibrar:pressed {
+QPushButton#btnRecentrar:pressed {
     background-color: rgba(34, 211, 238, 90);
 }
 </string>
@@ -298,9 +298,9 @@ QPushButton#btnCalibrar:pressed {
         </widget>
        </item>
        <item>
-        <widget class="QPushButton" name="btnCalibrar">
+        <widget class="QPushButton" name="btnRecentrar">
          <property name="text">
-          <string>⟲  Calibrar cursor</string>
+          <string>⟲  Recentrar</string>
          </property>
          <property name="cursor">
           <cursorShape>PointingHandCursor</cursorShape>
@@ -589,12 +589,12 @@ QPushButton#btnCalibrar:pressed {
          </layout>
         </item>
         <item>
-         <layout class="QGridLayout" name="layoutMovimiento" rowstretch="1,1,1" columnstretch="1,1,1">
+         <layout class="QGridLayout" name="layoutMovimiento" rowstretch="1,1,1" columnstretch="1,1">
           <property name="horizontalSpacing">
-           <number>14</number>
+           <number>6</number>
           </property>
           <property name="verticalSpacing">
-           <number>14</number>
+           <number>6</number>
           </property>
           <property name="leftMargin">
            <number>0</number>
@@ -608,7 +608,7 @@ QPushButton#btnCalibrar:pressed {
           <property name="bottomMargin">
            <number>0</number>
           </property>
-          <item row="0" column="1">
+          <item row="0" column="0" colspan="2">
            <widget class="TileButton" name="btn_avanzar">
             <property name="text">
              <string>Avanzar</string>
@@ -646,7 +646,7 @@ QPushButton#btnCalibrar:pressed {
             </property>
            </widget>
           </item>
-          <item row="1" column="2">
+          <item row="1" column="1">
            <widget class="TileButton" name="btn_girar_der">
             <property name="text">
              <string>Girar derecha</string>
@@ -665,7 +665,7 @@ QPushButton#btnCalibrar:pressed {
             </property>
            </widget>
           </item>
-          <item row="2" column="1">
+          <item row="2" column="0" colspan="2">
            <widget class="TileButton" name="btn_regresar">
             <property name="text">
              <string>Regresar</string>
@@ -846,7 +846,7 @@ QPushButton#btnCalibrar:pressed {
              <item>
               <layout class="QHBoxLayout" name="layoutTarjetaBtn_1">
                <property name="spacing">
-                <number>10</number>
+                <number>4</number>
                </property>
                <property name="leftMargin">
                 <number>0</number>
@@ -979,7 +979,7 @@ QPushButton#btnCalibrar:pressed {
              <item>
               <layout class="QHBoxLayout" name="layoutTarjetaBtn_2">
                <property name="spacing">
-                <number>10</number>
+                <number>4</number>
                </property>
                <property name="leftMargin">
                 <number>0</number>
@@ -1068,7 +1068,7 @@ QPushButton#btnCalibrar:pressed {
                <item>
                 <widget class="QLabel" name="lbl_disp_3">
                  <property name="text">
-                  <string>Secadora 1</string>
+                  <string>Foco 1</string>
                  </property>
                  <property name="rol" stdset="0">
                   <string>dispositivo</string>
@@ -1112,7 +1112,7 @@ QPushButton#btnCalibrar:pressed {
              <item>
               <layout class="QHBoxLayout" name="layoutTarjetaBtn_3">
                <property name="spacing">
-                <number>10</number>
+                <number>4</number>
                </property>
                <property name="leftMargin">
                 <number>0</number>
@@ -1245,7 +1245,7 @@ QPushButton#btnCalibrar:pressed {
              <item>
               <layout class="QHBoxLayout" name="layoutTarjetaBtn_4">
                <property name="spacing">
-                <number>10</number>
+                <number>4</number>
                </property>
                <property name="leftMargin">
                 <number>0</number>
@@ -1378,7 +1378,7 @@ QPushButton#btnCalibrar:pressed {
              <item>
               <layout class="QHBoxLayout" name="layoutTarjetaBtn_5">
                <property name="spacing">
-                <number>10</number>
+                <number>4</number>
                </property>
                <property name="leftMargin">
                 <number>0</number>
@@ -1467,7 +1467,7 @@ QPushButton#btnCalibrar:pressed {
                <item>
                 <widget class="QLabel" name="lbl_disp_6">
                  <property name="text">
-                  <string>Cafetera 2</string>
+                  <string>Fire TV</string>
                  </property>
                  <property name="rol" stdset="0">
                   <string>dispositivo</string>
@@ -1511,7 +1511,7 @@ QPushButton#btnCalibrar:pressed {
              <item>
               <layout class="QHBoxLayout" name="layoutTarjetaBtn_6">
                <property name="spacing">
-                <number>10</number>
+                <number>4</number>
                </property>
                <property name="leftMargin">
                 <number>0</number>
