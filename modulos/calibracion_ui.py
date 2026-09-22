@@ -129,7 +129,9 @@ class DialogoCalibracion(QDialog):
         self._hx = self._hy = 0.0
         self.centro = None
         self.alcances = {}
+        self._al_reves = {}
         self.guardado = False
+        self.aviso = None
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(80, 50, 80, 40)
@@ -250,12 +252,25 @@ class DialogoCalibracion(QDialog):
             self.centro = (xs[len(xs) // 2], ys[len(ys) // 2])
         else:
             base = self.centro[0] if eje == "x" else self.centro[1]
-            # Percentil alto del recorrido en el sentido pedido, en vez del
-            # máximo absoluto: un solo frame con ruido no define el alcance.
-            desv = sorted((m[0] if eje == "x" else m[1]) - base for m in self._muestras)
-            desv = [d * signo for d in desv]          # positivo = hacia donde se pidió
-            desv = [d for d in desv if d > 0]
-            self.alcances[nombre] = desv[int(len(desv) * 0.8)] if desv else 0.0
+            # Desviación con el signo ya puesto en el sentido que se pidió
+            # (positivo = hacia allá). Se ordena DESPUÉS de multiplicar por
+            # el signo: multiplicar por -1 invierte el orden, así que
+            # ordenar antes daba un percentil equivocado.
+            desv = [((m[0] if eje == "x" else m[1]) - base) * signo
+                    for m in self._muestras]
+            # Percentil alto del recorrido, en vez del máximo absoluto: un
+            # solo frame con ruido no debe definir el alcance.
+            hacia_alla = sorted(d for d in desv if d > 0)
+            self.alcances[nombre] = (hacia_alla[int(len(hacia_alla) * 0.8)]
+                                     if hacia_alla else 0.0)
+            # Guardamos también cuánto se movió al REVÉS. Si el recorrido fue
+            # casi todo al revés, el eje está invertido respecto a lo que se
+            # pidió, y hay que avisarlo: si no, el alcance sale 0, el umbral
+            # cae al piso de seguridad y los gestos de ese eje terminan
+            # moviendo el foco al lado contrario sin explicación.
+            al_reves = sorted(-d for d in desv if d < 0)
+            self._al_reves[nombre] = (al_reves[int(len(al_reves) * 0.8)]
+                                      if al_reves else 0.0)
 
         if self._paso < len(PASOS) - 1:
             self._paso += 1
@@ -264,6 +279,19 @@ class DialogoCalibracion(QDialog):
             self._timer.stop()
             self._guardar()
             self.accept()
+
+    def ejes_invertidos(self):
+        """Ejes donde el movimiento fue mayormente AL REVÉS de lo pedido.
+        Casi siempre significa que la señal de ese eje tiene el signo
+        cambiado (p. ej. por la imagen en espejo)."""
+        invertidos = set()
+        for nombre, eje in (("izquierda", "x"), ("derecha", "x"),
+                            ("arriba", "y"), ("abajo", "y")):
+            bien = self.alcances.get(nombre, 0.0)
+            reves = self._al_reves.get(nombre, 0.0)
+            if reves > max(bien * 2, 0.1):
+                invertidos.add(eje)
+        return invertidos
 
     def _guardar(self):
         minimo = float(_config.get("calib_umbral_minimo", 0.12))
@@ -279,3 +307,10 @@ class DialogoCalibracion(QDialog):
             json.dump(datos, f, indent=2)
         self.guardado = True
         print(f"[calibracion] centro={datos['centro']} umbrales={umbrales}")
+
+        for eje in self.ejes_invertidos():
+            clave = "mp_invert_x" if eje == "x" else "mp_invert_y"
+            self.aviso = (f"El eje {eje.upper()} está invertido: al pedir un "
+                          f"sentido, la cabeza se movió al contrario. "
+                          f"Cambia \"{clave}\" en config.json.")
+            print(f"[calibracion] AVISO: {self.aviso}")

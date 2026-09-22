@@ -9,7 +9,7 @@
     "mp_ancho_deteccion": 640,
     "mp_yaw_normalization_deg": 35.0,
     "mp_vertical_scale": 4.0,
-    "mp_invert_x": false,
+    "mp_invert_x": true,
     "mp_invert_y": false,
     "mp_eye_closed_threshold": 0.2,
     "registro_senales": true,

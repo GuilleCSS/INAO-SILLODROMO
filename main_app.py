@@ -199,8 +199,11 @@ class ControlCentral(QMainWindow):
 
         if dialogo.guardado and self.hilo.controller:
             self.hilo.controller.cargar_calibracion()
-            self.mostrar_mensaje("Calibración lista")
-            hablar_en_segundo_plano("Listo")
+            if dialogo.aviso:
+                self.mostrar_mensaje(f"Calibración con problema: {dialogo.aviso}")
+            else:
+                self.mostrar_mensaje("Calibración lista")
+                hablar_en_segundo_plano("Listo")
         elif resultado == 0:
             self.mostrar_mensaje("Calibración saltada: se usan los valores guardados")
 
