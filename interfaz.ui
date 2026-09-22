@@ -1201,7 +1201,7 @@ QPushButton#btnRecentrar:pressed {
                <item>
                 <widget class="QLabel" name="lbl_disp_4">
                  <property name="text">
-                  <string>Ventilador 2</string>
+                  <string>Ventilador</string>
                  </property>
                  <property name="rol" stdset="0">
                   <string>dispositivo</string>
@@ -1334,7 +1334,7 @@ QPushButton#btnRecentrar:pressed {
                <item>
                 <widget class="QLabel" name="lbl_disp_5">
                  <property name="text">
-                  <string>Alexa 2</string>
+                  <string>Cafetera</string>
                  </property>
                  <property name="rol" stdset="0">
                   <string>dispositivo</string>
@@ -1467,7 +1467,7 @@ QPushButton#btnRecentrar:pressed {
                <item>
                 <widget class="QLabel" name="lbl_disp_6">
                  <property name="text">
-                  <string>Fire TV</string>
+                  <string>Netflix</string>
                  </property>
                  <property name="rol" stdset="0">
                   <string>dispositivo</string>

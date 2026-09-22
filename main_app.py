@@ -32,15 +32,20 @@ with open("config.json", "r") as f:
 
 RUTA_UI = os.path.join(BASE_DIR, "interfaz.ui")
 
-# (texto en pantalla, nombre que se le dice a Alexa, comando extra opcional
-#  que se manda justo después de "Alexa, enciende {nombre}")
+# (texto en pantalla, frase para encender, frase para apagar)
+#
+# Las frases van completas, sin el "Alexa," inicial que se antepone solo.
+# Antes se guardaba el nombre del aparato y las órdenes se armaban siempre
+# como "enciende X" / "apaga X", pero no todo se pide así: Netflix se pone y
+# se quita. Escribir la frase entera deja claro qué se le dice a Alexa y
+# permite cualquier verbo.
 DISPOSITIVOS = [
-    ("Rasuradora", "rasuradora", None),
-    ("Secadora", "secadora", None),
-    ("Foco 1", "foco uno", None),
-    ("Ventilador 2", "ventilador dos", None),
-    ("Alexa 2", "Alexa dos", None),
-    ("Fire TV", "Fire TV", "abre Netflix en Fire TV"),
+    ("Rasuradora", "enciende rasuradora", "apaga rasuradora"),
+    ("Secadora",   "enciende secadora",   "apaga secadora"),
+    ("Foco 1",     "enciende foco uno",   "apaga foco uno"),
+    ("Ventilador", "enciende ventilador", "apaga ventilador"),
+    ("Cafetera",   "enciende cafetera",   "apaga cafetera"),
+    ("Netflix",    "pon Netflix",         "quita Netflix"),
 ]
 
 # movimiento -> (texto, método de DomoticaController)
@@ -387,7 +392,7 @@ class ControlCentral(QMainWindow):
 
     def _configurar_domotica(self):
         self.tarjetas = []
-        for i, (visual, voz, extra) in enumerate(DISPOSITIVOS, start=1):
+        for i, (visual, frase_on, frase_off) in enumerate(DISPOSITIVOS, start=1):
             tarjeta = {
                 "nombre": visual,
                 "frame": getattr(self, f"tarjeta_{i}"),
@@ -395,9 +400,9 @@ class ControlCentral(QMainWindow):
             }
             getattr(self, f"lbl_disp_{i}").setText(visual)
             getattr(self, f"btn_on_{i}").clicked.connect(
-                lambda _=False, t=tarjeta, v=voz, ex=extra: self.encender_dispositivo(t, v, ex))
+                lambda _=False, t=tarjeta, f=frase_on: self.encender_dispositivo(t, f))
             getattr(self, f"btn_off_{i}").clicked.connect(
-                lambda _=False, t=tarjeta, v=voz: self.apagar_dispositivo(t, v))
+                lambda _=False, t=tarjeta, f=frase_off: self.apagar_dispositivo(t, f))
             self.tarjetas.append(tarjeta)
 
     def _configurar_estado_inicial(self):
@@ -536,18 +541,13 @@ class ControlCentral(QMainWindow):
     # DOMÓTICA
     # --------------------------------------------------------
 
-    def encender_dispositivo(self, tarjeta, nombre_voz, comando_extra=None):
-        hablar_en_segundo_plano(f"Alexa, enciende {nombre_voz}")
-        if comando_extra:
-            # Se encola después (voice_synth.py ya reproduce en orden, sin
-            # pisarse), así "enciende Fire TV" sale primero y "abre Netflix"
-            # después, no al mismo tiempo.
-            hablar_en_segundo_plano(f"Alexa, {comando_extra}")
+    def encender_dispositivo(self, tarjeta, frase):
+        hablar_en_segundo_plano(f"Alexa, {frase}")
         self._marcar_tarjeta(tarjeta, True)
         self.mostrar_mensaje(f"Encendiendo: {tarjeta['nombre']}")
 
-    def apagar_dispositivo(self, tarjeta, nombre_voz):
-        hablar_en_segundo_plano(f"Alexa, apaga {nombre_voz}")
+    def apagar_dispositivo(self, tarjeta, frase):
+        hablar_en_segundo_plano(f"Alexa, {frase}")
         self._marcar_tarjeta(tarjeta, False)
         self.mostrar_mensaje(f"Apagando: {tarjeta['nombre']}")
 
