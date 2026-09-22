@@ -1,5 +1,5 @@
 {
-    "camera_index": 0,
+    "camera_index": 1,
     "camera_fps": 30,
     "cam_width": "1280",
     "cam_height": "720",
@@ -13,7 +13,11 @@
     "mp_invert_x": false,
     "mp_invert_y": false,
     "mp_eye_closed_threshold": 0.20,
-    "mp_registrar_valores": false,
+
+    "registro_senales": true,
+    "registro_ruta": "diagnostico_senales.csv",
+    "registro_hz": 10,
+    "registro_max_filas": 20000,
 
     "escena_frames": 30,
     "escena_brillo_objetivo": 120.0,

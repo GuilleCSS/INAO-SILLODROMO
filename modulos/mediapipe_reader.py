@@ -139,6 +139,59 @@ class MejoradorImagen:
 
 
 # ============================================================
+# REGISTRO DE SEÑALES (para ajustar umbrales con datos reales)
+# ============================================================
+
+class RegistroSenales:
+    """
+    Guarda las señales crudas en un CSV mientras se usa la app con
+    normalidad.
+
+    Antes esto se imprimía en consola, que es inservible aquí: la app corre
+    en pantalla completa y tapa la terminal, así que no hay forma de leer
+    los valores mientras se hacen los gestos. Con el archivo no hace falta
+    ningún asistente de calibración ni transcribir nada a mano: se usa la
+    app normal y después se analiza el registro.
+    """
+
+    def __init__(self):
+        self.activo = bool(config.get("registro_senales", True))
+        if not self.activo:
+            return
+        self.ruta = config.get("registro_ruta", "diagnostico_senales.csv")
+        self.intervalo = 1.0 / max(1, int(config.get("registro_hz", 10)))
+        self.max_filas = int(config.get("registro_max_filas", 20000))
+        self._filas = 0
+        self._ultimo = 0.0
+        try:
+            self._f = open(self.ruta, "w", buffering=1)  # line buffered: legible en vivo
+            self._f.write("t,hx,hy,vertical,yaw,boca,ear,fps\n")
+        except OSError as e:
+            print(f"[registro] no se pudo abrir {self.ruta}: {e}")
+            self.activo = False
+
+    def anotar(self, ahora, hx, hy, vertical, yaw, boca, ear, fps):
+        if not self.activo or self._filas >= self.max_filas:
+            return
+        if (ahora - self._ultimo) < self.intervalo:
+            return
+        self._ultimo = ahora
+        self._filas += 1
+        try:
+            self._f.write(f"{ahora:.3f},{hx:.4f},{hy:.4f},{vertical:.4f},"
+                          f"{yaw:.2f},{boca:.2f},{ear:.4f},{fps:.1f}\n")
+        except OSError:
+            self.activo = False
+
+    def cerrar(self):
+        if self.activo:
+            try:
+                self._f.close()
+            except OSError:
+                pass
+
+
+# ============================================================
 # MEDICIONES SOBRE LA MALLA FACIAL
 # ============================================================
 
@@ -246,7 +299,7 @@ def generador_mediapipe():
     eye_threshold = float(config.get("mp_eye_closed_threshold", 0.20))
     espejo = bool(config.get("camara_espejo", True))
     dibujar_malla = bool(config.get("mostrar_malla", False))
-    registrar = bool(config.get("mp_registrar_valores", False))
+    registro = RegistroSenales()
 
     # El detector corre sobre una copia reducida: MediaPipe no gana precisión
     # útil con más resolución para esta tarea, y bajarla aligera bastante la
@@ -256,7 +309,6 @@ def generador_mediapipe():
     mejorador = MejoradorImagen()
     ultimo_tiempo = time.perf_counter()
     fps_suavizado = 0.0
-    ultimo_log = 0.0
 
     try:
         while cap.isOpened():
@@ -327,14 +379,10 @@ def generador_mediapipe():
             fps_actual = 1.0 / dt
             fps_suavizado = fps_actual if fps_suavizado == 0.0 else (0.10 * fps_actual + 0.90 * fps_suavizado)
 
-            # Diagnóstico para ajustar umbrales con datos reales en vez de a
-            # ojo: mp_registrar_valores=true imprime las señales 2 veces por
-            # segundo mientras se prueban los gestos.
-            if registrar and (ahora - ultimo_log) > 0.5:
-                ultimo_log = ahora
-                print(f"[mp] hx={hx:+.3f} hy={hy:+.3f} vert={senal_vertical:+.3f} "
-                      f"boca={apertura_boca:5.1f} ear={ear:.3f} fps={fps_suavizado:4.1f}")
+            registro.anotar(ahora, hx, hy, senal_vertical, yaw,
+                            apertura_boca, ear, fps_suavizado)
 
             yield frame, hx, hy, au45, conf, y_51, y_57
     finally:
+        registro.cerrar()
         cap.release()
