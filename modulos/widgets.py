@@ -8,6 +8,7 @@ Se usan desde interfaz.ui como *widgets promovidos* de Qt Designer
 - VistaCamara      -> promovido desde QWidget
 - IndicadorCabeza  -> promovido desde QWidget
 - IndicadorBoca    -> promovido desde QWidget
+- IndicadorOjos    -> promovido desde QWidget
 
 Propiedades dinámicas que TileButton lee del .ui:
     icono            "arriba" | "izquierda" | "derecha" | "power"
@@ -613,3 +614,89 @@ class IndicadorBoca(QWidget):
         xu = barra.left() + barra.width() * (self.umbral / maximo)
         p.setPen(QPen(QColor(TEXT), 2))
         p.drawLine(QPointF(xu, barra.top() - 4), QPointF(xu, barra.bottom() + 4))
+
+
+# ============================================================
+# INDICADOR DE OJOS (cierre + cuenta para pausar)
+# ============================================================
+
+class IndicadorOjos(QWidget):
+    """
+    Hermano del IndicadorBoca, pero con una diferencia importante: el EAR
+    BAJA cuando los ojos se cierran, así que llenar la barra con el EOR
+    crudo se vería al revés de lo que pasa en la cara. Lo que se dibuja es
+    el *cierre*: umbral/EAR, que vale 1.0 justo en el umbral y crece al
+    cerrar. Así la barra sube cuando los párpados bajan, que es lo que la
+    persona espera ver.
+
+    Con los ojos ya cerrados la barra cambia de significado y muestra
+    cuánto falta para que se dispare la pausa. Ese es el dato que de verdad
+    hace falta mientras se espera con los ojos cerrados: sin él, no hay
+    forma de saber si el sistema está contando o si el gesto se perdió.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.ear = 0.0
+        self.cerrados = False
+        self.umbral = 0.20
+        self.progreso = 0.0
+        self.objetivo = float(config.get("blink_hold_time", 3.5))
+
+    def actualizar(self, ear, cerrados, umbral=None, progreso=0.0):
+        self.ear = ear
+        self.cerrados = cerrados
+        self.progreso = max(0.0, min(1.0, progreso))
+        if umbral:
+            self.umbral = umbral
+        self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+
+        if self.cerrados:
+            restante = max(0.0, self.objetivo * (1.0 - self.progreso))
+            etiqueta = f"OJOS · CERRADOS {restante:0.1f}s"
+            color = QColor(GREEN if self.progreso >= 1.0 else AMBER)
+        else:
+            etiqueta = "OJOS · ABIERTOS"
+            color = QColor(MUTED)
+
+        p.setFont(fuente(13, QFont.DemiBold))
+        p.setPen(color)
+        p.drawText(QRectF(0, 0, w, h / 2), Qt.AlignLeft | Qt.AlignVCenter, etiqueta)
+
+        barra = QRectF(0, h / 2 + 4, w, min(16.0, h / 2 - 8))
+        rad = barra.height() / 2
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(SURFACE_2))
+        p.drawRoundedRect(barra, rad, rad)
+
+        if self.cerrados:
+            t = self.progreso
+            base = QColor(GREEN if self.progreso >= 1.0 else AMBER)
+            marca = None
+        else:
+            # umbral/EAR: 1.0 = justo en el umbral. Se dibuja hasta 1.5
+            # igual que la boca, para que las dos barras se lean igual.
+            maximo = 1.5
+            cierre = self.umbral / max(self.ear, 1e-6) if self.ear else 0.0
+            t = max(0.0, min(1.0, cierre / maximo))
+            base = QColor(CYAN)
+            marca = 1.0 / maximo
+
+        if t > 0.02:
+            relleno = QRectF(barra.left(), barra.top(),
+                             max(barra.height(), barra.width() * t), barra.height())
+            g = QLinearGradient(relleno.topLeft(), relleno.topRight())
+            g.setColorAt(0, base.darker(140))
+            g.setColorAt(1, base)
+            p.setBrush(QBrush(g))
+            p.drawRoundedRect(relleno, rad, rad)
+
+        if marca is not None:
+            xu = barra.left() + barra.width() * marca
+            p.setPen(QPen(QColor(TEXT), 2))
+            p.drawLine(QPointF(xu, barra.top() - 4), QPointF(xu, barra.bottom() + 4))

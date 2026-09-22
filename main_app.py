@@ -84,10 +84,10 @@ class HiloProcesamiento(QThread):
             self.senal_listo.emit()
             self.senal_mensaje.emit("Sistema activo · leyendo bioseñales")
 
-            for frame, hx, hy, au45, conf, y_51, y_57 in generador_mediapipe():
+            for frame, hx, hy, au45, conf, y_51, y_57, ear in generador_mediapipe():
                 if not self._activo:
                     break
-                estado = self.controller.process_frame(hx, hy, au45, conf, y_51, y_57)
+                estado = self.controller.process_frame(hx, hy, au45, conf, y_51, y_57, ear=ear)
                 if estado:
                     self.senal_estado.emit(estado)
                 self._emitir_frame(frame)
@@ -585,6 +585,12 @@ class ControlCentral(QMainWindow):
         self.vistaCamara.set_estado(e)
         self.indCabeza.actualizar(e["frac_x"], e["frac_y"], activo)
         self.indBoca.actualizar(e["apertura"], e["clic"], e.get("boca_umbral"))
+        self.indOjos.actualizar(
+            e.get("ear", 0.0),
+            e.get("ojos_cerrados", False),
+            e.get("ojos_umbral"),
+            e.get("ojos_progreso", 0.0),
+        )
         self.lblDireccion.setText(e["direccion"] if activo else "—")
 
     def _tick_reloj(self):

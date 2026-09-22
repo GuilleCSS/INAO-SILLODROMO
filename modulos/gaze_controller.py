@@ -92,6 +92,18 @@ class GazeStateController:
         self._apertura_base = None
         self._frames_desde_base = 0
 
+        # Ojos: mismo tratamiento que la boca. El umbral fijo de EAR no
+        # servía porque el margen era más chico que el ruido de la señal
+        # (medido: ojos abiertos 0.250 de mediana contra un umbral de 0.200,
+        # con una desviación de ±0.056). Aquí se aprende el EAR con los ojos
+        # abiertos y los umbrales salen de ahí, con histéresis.
+        self._ears = deque(maxlen=max(30, int(config.get("ojos_base_ventana_seg", 30.0) * 30)))
+        self._ear_base = None
+        self._frames_desde_ear = 0
+        self.ultimo_ear = 0.0
+        self.ojos_cerrados = False
+        self._ojos_abiertos_desde = None
+
         # Navegación por saltos
         self._nodos = {}                       # nodo -> (x, y) en pantalla
         self._etiquetas_nodos = dict(ETIQUETAS_FOCO_BASE)
@@ -231,6 +243,43 @@ class GazeStateController:
         idx = min(len(muestras) - 1, int(len(muestras) * percentil))
         self._apertura_base = muestras[idx]
 
+    def _progreso_pausa(self):
+        """Fracción del gesto de pausa ya cumplida (0 a 1)."""
+        if self.blink_start_time is None:
+            return 0.0
+        objetivo = config.get("blink_hold_time", 3.5)
+        return (time.time() - self.blink_start_time) / max(objetivo, 1e-6)
+
+    def _actualizar_ojos(self, ear):
+        """
+        Decide si los ojos están cerrados, con umbral aprendido e histéresis.
+
+        La línea base es un percentil ALTO del EAR reciente: los ojos pasan
+        abiertos la mayor parte del tiempo, así que ese percentil representa
+        el ojo abierto de ESTA persona con ESTA cámara. Los umbrales salen
+        como fracción de esa base, y son dos distintos (cerrar y abrir) para
+        que la señal no oscile alrededor de un único valor.
+        """
+        self._ears.append(ear)
+        self.ultimo_ear = ear
+
+        self._frames_desde_ear += 1
+        if self._ear_base is None or self._frames_desde_ear >= 10:
+            self._frames_desde_ear = 0
+            muestras = sorted(self._ears)
+            pct = config.get("ojos_base_percentil", 75) / 100.0
+            self._ear_base = muestras[min(len(muestras) - 1, int(len(muestras) * pct))]
+
+        self.umbral_cerrar = self._ear_base * config.get("ojos_frac_cerrar", 0.62)
+        self.umbral_abrir = self._ear_base * config.get("ojos_frac_abrir", 0.75)
+
+        if self.ojos_cerrados:
+            # Para darlos por abiertos hay que superar el umbral ALTO.
+            self.ojos_cerrados = ear < self.umbral_abrir
+        else:
+            self.ojos_cerrados = ear < self.umbral_cerrar
+        return self.ojos_cerrados
+
     def _actualizar_boca(self, apertura, ojos_cerrados=False, tiempo_ojos_cerrados=0.0):
         self._refrescar_apertura_base(apertura)
 
@@ -286,6 +335,13 @@ class GazeStateController:
             "clic": self.clic_mantenido,
             "apertura": self.ultima_apertura,
             "boca_umbral": base + config.get("boca_delta_on", 15.0),
+            "ear": self.ultimo_ear,
+            "ojos_cerrados": self.ojos_cerrados,
+            "ojos_umbral": getattr(self, "umbral_cerrar", 0.0),
+            # Qué tanto se lleva del gesto de pausa, de 0 a 1. Es lo que hace
+            # visible que el sistema SÍ está contando, en vez de tener que
+            # adivinar si detectó los ojos cerrados o no.
+            "ojos_progreso": min(1.0, self._progreso_pausa()),
             "frac_x": self._frac_x,
             "frac_y": self._frac_y,
             "hx": self.hx_suavizado,
@@ -301,7 +357,7 @@ class GazeStateController:
     # PROCESAMIENTO POR FRAME
     # --------------------------------------------------------
 
-    def process_frame(self, hx, hy, au45_c, conf, y_51, y_57, puntos=None):
+    def process_frame(self, hx, hy, au45_c, conf, y_51, y_57, puntos=None, ear=None):
         current_time = time.time()
         self._puntos = puntos or []
 
@@ -329,13 +385,17 @@ class GazeStateController:
         # Mantener aquel guardia era peligroso: con los ojos cerrados y la
         # boca abierta el sistema no pausaba, no disparaba la emergencia y
         # SÍ hacía clic. Un bostezo es exactamente esa combinación.
-        is_eyes_closed = (au45_c >= 1.0)
+        if ear is not None:
+            is_eyes_closed = self._actualizar_ojos(ear)
+        else:
+            is_eyes_closed = (au45_c >= 1.0)
 
         # 1. MECANISMO DE PAUSA (ojos cerrados) + EMERGENCIA (ojos cerrados
         # mucho más tiempo, un umbral bien separado del de pausa para que no
         # se confundan).
         tiempo_ojos_cerrados = 0.0
         if is_eyes_closed:
+            self._ojos_abiertos_desde = None
             if self.blink_start_time is None:
                 self.blink_start_time = current_time
 
@@ -360,8 +420,30 @@ class GazeStateController:
             if elapsed >= tiempo_emergencia and not self.emergencia_disparada:
                 self.emergencia_disparada = True
                 self._emergencia_evento = True
+        elif self.blink_start_time is not None:
+            # Los ojos se ven abiertos, pero NO se reinicia de inmediato.
+            #
+            # Mantener los ojos cerrados a propósito no da una señal limpia:
+            # el EAR tiembla y de vez en cuando cruza el umbral por un frame
+            # suelto. Medido sobre una sesión real, hubo 67 de esas
+            # interrupciones, con una mediana de 0.12 s, y cada una ponía el
+            # contador en cero: por eso pausar "a veces tardaba muchísimo" o
+            # no llegaba nunca. Tolerando huecos de hasta ojos_gracia_seg,
+            # las veces que el gesto alcanza a completarse pasan de 2 a 7.
+            if self._ojos_abiertos_desde is None:
+                self._ojos_abiertos_desde = current_time
+            tiempo_ojos_cerrados = current_time - self.blink_start_time
+
+            if (current_time - self._ojos_abiertos_desde) >= config.get("ojos_gracia_seg", 0.35):
+                self.blink_start_time = None
+                self.blink_action_triggered = False
+                self._ojos_abiertos_desde = None
+                tiempo_ojos_cerrados = 0.0
+                if self.emergencia_disparada:
+                    self.emergencia_disparada = False
+                    self._emergencia_cancelar = True
         else:
-            self.blink_start_time = None
+            self._ojos_abiertos_desde = None
             self.blink_action_triggered = False
             if self.emergencia_disparada:
                 self.emergencia_disparada = False

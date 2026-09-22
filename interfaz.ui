@@ -514,6 +514,22 @@ QPushButton#btnRecentrar:pressed {
              </property>
             </widget>
            </item>
+           <item>
+            <widget class="IndicadorOjos" name="indOjos">
+             <property name="minimumSize">
+              <size>
+               <width>160</width>
+               <height>56</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>16777215</width>
+               <height>56</height>
+              </size>
+             </property>
+            </widget>
+           </item>
           </layout>
          </item>
         </layout>
@@ -1637,6 +1653,11 @@ QPushButton#btnRecentrar:pressed {
   </customwidget>
   <customwidget>
    <class>IndicadorBoca</class>
+   <extends>QWidget</extends>
+   <header>modulos/widgets.h</header>
+  </customwidget>
+  <customwidget>
+   <class>IndicadorOjos</class>
    <extends>QWidget</extends>
    <header>modulos/widgets.h</header>
   </customwidget>
