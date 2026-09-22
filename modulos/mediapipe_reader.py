@@ -16,7 +16,7 @@ la cámara va montada en una silla que se mueve por la casa: la iluminación
 cambia todo el tiempo, y un ajuste fijo calculado al arrancar deja de servir
 en cuanto se cambia de cuarto.
 
-generador_mediapipe() yield-ea (frame, hx, hy, au45_c, conf, y_51, y_57, ear):
+generador_mediapipe() yield-ea (frame, hx, hy, au45_c, conf, y_51, y_57):
 el mismo contrato de datos que espera GazeStateController.process_frame(),
 más el frame ya listo para mostrarse.
 """
@@ -572,7 +572,7 @@ def generador_mediapipe():
                             apertura_boca, ear, fps_suavizado,
                             mejorador.brillo or 0.0, mejorador.gamma)
 
-            yield frame, hx, hy, au45, conf, y_51, y_57, ear
+            yield frame, hx, hy, au45, conf, y_51, y_57
     finally:
         registro.cerrar()
         cap.release()
