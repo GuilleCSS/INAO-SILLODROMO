@@ -9,26 +9,6 @@ with open('config.json', 'r') as f:
     config = json.load(f)
 
 
-# ============================================================
-# GRAFO DE NAVEGACIÓN (cruceta + domótica como un solo mapa de saltos)
-# ============================================================
-#
-# La cruceta queda así en pantalla:
-#
-#     [   ..... AVANZAR ..... ]      <- avanzar_izq | avanzar_der (un solo
-#     [ IZQUIERDA | DERECHA   ]         botón, dos mitades conceptuales)
-#     [   ..... REGRESAR .... ]      <- regresar_izq | regresar_der
-#
-# Avanzar y Regresar ocupan todo el ancho, así que se dividen en dos
-# mitades conceptuales (mismo botón, dos puntos de destino distintos) para
-# que desde cualquiera de las dos se pueda bajar/subir directo a Izquierda
-# o a Derecha sin ambigüedad.
-#
-# Debajo sigue la domótica: 3 tarjetas por fila, cada una con Encender
-# (izquierda) / Apagar (derecha) — 6 "columnas" por fila. Regresar conecta
-# hacia abajo con la fila 1 (dom1..dom3); Avanzar es el techo, no baja a
-# nada.
-
 GRAFO_NAVEGACION = {
     "avanzar_izq": {"derecha": "avanzar_der", "abajo": "izquierda"},
     "avanzar_der": {"izquierda": "avanzar_izq", "abajo": "derecha"},
@@ -107,21 +87,6 @@ class GazeStateController:
         self._ultimo_rostro_ok = time.time()
         self._puntos = []
 
-        # Línea base de "boca cerrada en reposo", auto-ajustada (no un
-        # número fijo adivinado): la apertura real con la boca cerrada varía
-        # según la distancia a la cámara, el tamaño de cara, etc., así que
-        # los umbrales de clic se calculan como un margen POR ENCIMA de esta
-        # base, no como valores absolutos.
-        #
-        # Se estima como un percentil BAJO de una ventana larga de lecturas
-        # recientes, y se actualiza SIEMPRE (esté o no presionado el clic).
-        # Antes se fijaba con un solo frame y solo se refrescaba mientras el
-        # clic estaba suelto: si ese primer frame venía con ruido, o si el
-        # clic se enganchaba por error, la base nunca se corregía y la boca
-        # quedaba detectada como abierta de forma permanente. Con la ventana
-        # larga, un rato de boca genuinamente abierta (p. ej. avanzar) no
-        # alcanza a mover el percentil, pero una detección trabada sí se
-        # corrige sola en cuanto la ventana se llena de valores de reposo.
         ventana_seg = config.get("boca_base_ventana_seg", 30.0)
         self._aperturas = deque(maxlen=max(30, int(ventana_seg * 30)))
         self._apertura_base = None
@@ -131,40 +96,24 @@ class GazeStateController:
         self._nodos = {}                       # nodo -> (x, y) en pantalla
         self._etiquetas_nodos = dict(ETIQUETAS_FOCO_BASE)
         self._foco = FOCO_INICIAL
-        # Un rastreador de zona POR EJE (no uno solo compartido): así, si el
-        # gesto cruza el umbral de X y de Y en el mismo instante (un
-        # movimiento en diagonal), se detectan los dos por separado y se
-        # aplican ambos pasos seguidos — más rápido que tener que hacer el
-        # gesto horizontal y el vertical uno a la vez.
+
         self._zona_anterior_x = "centro"       # "izquierda" | "derecha" | "centro"
         self._zona_anterior_y = "centro"       # "arriba" | "abajo" | "centro"
 
-        # "Centro" de referencia para los gestos, auto-ajustado (no requiere
-        # ningún paso de calibración).
-        #
-        # NO se puede arrancar en 0.0: eso asume que la señal en reposo vale
-        # cero, lo cual es cierto para unos backends y falso para otros (con
-        # MediaPipe el reposo vertical ronda +2.5, porque la nariz siempre
-        # está por debajo de los ojos). Con el centro en 0 la cabeza queda
-        # permanentemente "hacia abajo" y jamás se puede detectar "arriba".
-        #
-        # Tampoco se toma del primer frame suelto (si viene con ruido o con
-        # un gesto a medias, el centro queda mal desde el arranque). Se usa
-        # la MEDIANA de las primeras lecturas, que es inmune a ambas cosas.
         self._centro_x = None
         self._centro_y = None
         self._muestras_centro = []
 
         # Historial corto de posiciones, para detectar que el centro quedó
-        # mal y recuperarse solo (ver _recuperar_centro).
+        # mal y recuperarse solo (ver _recuperar_centro)
         self._hist_pos = deque()
 
         # Pausa tras cada paso: da tiempo a que la cabeza regrese al centro
-        # antes de volver a evaluar gestos. No-None significa "en pausa".
+        # antes de volver a evaluar gestos. No-None significa "en pausa"
         self._tiempo_ultimo_paso = None
 
         # Desviación actual respecto al centro, en fracción del umbral
-        # (±1 = justo en el umbral). Es lo que dibuja el indicador de cabeza.
+        # (±1 = justo en el umbral). Es lo que dibuja el indicador de cabeza
         self._frac_x = 0.0
         self._frac_y = 0.0
 
@@ -212,11 +161,6 @@ class GazeStateController:
         self._zona_anterior_y = "centro"
         self._tiempo_ultimo_paso = None
         return True
-
-        # Pausa tras cada paso: da tiempo a que la cabeza regrese al centro
-        # antes de volver a evaluar gestos. `_tiempo_ultimo_paso` no-None
-        # significa "en pausa/esperando volver al centro".
-        self._tiempo_ultimo_paso = None
 
     # --------------------------------------------------------
     # NODOS DE NAVEGACIÓN (posiciones reales en pantalla)

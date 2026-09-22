@@ -30,8 +30,12 @@ VELOCIDAD = "+10%"
 VOLUMEN = "+0%"
 TONO = "-15Hz"
 
-# Pequeña pausa SOLO para comandos de encendido ("Alexa" + comando)
-RETARDO_ENCENDIDO = 0.05
+# Pausa entre la palabra de activación ("Alexa") y el comando, para darle
+# al Echo el instante que necesita para despertar antes de que empiece la
+# orden. Se aplica a TODOS los comandos de Alexa: antes solo la recibían
+# los de encender, así que los de apagar se decían de corrido y el Echo se
+# perdía el principio de la frase.
+RETARDO_ALEXA = 0.05
 
 CACHE_DIR = "cache_voz"
 
@@ -98,11 +102,11 @@ def _procesar_cola():
         texto = _cola.get()
         try:
             texto = texto.strip()
-            if texto.lower().startswith("alexa, enciende"):
+            if texto.lower().startswith("alexa,"):
                 comando = texto.split(",", 1)[1].strip()
                 ruta_alexa, ruta_comando = asyncio.run(_preparar_alexa(comando))
                 _reproducir(ruta_alexa)
-                time.sleep(RETARDO_ENCENDIDO)
+                time.sleep(RETARDO_ALEXA)
                 _reproducir(ruta_comando)
             else:
                 _reproducir(_asegurar_audio(texto))
