@@ -7,3 +7,4 @@ venv/
 cache_voz/
 calibracion.json
 eventos_emergencia.log
+muestras_voz/

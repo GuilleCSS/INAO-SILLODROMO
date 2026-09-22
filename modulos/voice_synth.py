@@ -26,16 +26,17 @@ import edge_tts
 import pygame
 
 VOZ = "es-MX-JorgeNeural"
-VELOCIDAD = "+10%"
-VOLUMEN = "+0%"
-TONO = "-15Hz"
 
-# Pausa entre la palabra de activación ("Alexa") y el comando, para darle
-# al Echo el instante que necesita para despertar antes de que empiece la
-# orden. Se aplica a TODOS los comandos de Alexa: antes solo la recibían
-# los de encender, así que los de apagar se decían de corrido y el Echo se
-# perdía el principio de la frase.
-RETARDO_ALEXA = 0.05
+# Sin deformar la voz, y un poco más lento que lo normal.
+#
+# Antes iba a "+10%" de velocidad y "-15Hz" de tono. Las dos cosas juegan en
+# contra de que Alexa entienda: desplazar el tono corre los formantes (la
+# huella acústica que distingue una vocal de otra) y hablar rápido recorta
+# la articulación. Las voces neurales ya suenan naturales por sí solas; lo
+# mejor que se puede hacer por el reconocimiento es no deformarlas.
+VELOCIDAD = "-8%"
+VOLUMEN = "+0%"
+TONO = "+0Hz"
 
 CACHE_DIR = "cache_voz"
 
@@ -45,8 +46,18 @@ CACHE_DIR = "cache_voz"
 # ============================================================
 
 def _archivo_cache(texto):
+    """
+    La clave incluye los ajustes de voz, no solo el texto.
+
+    Si dependiera solo del texto, cambiar de voz, velocidad o tono no
+    tendría ningún efecto audible: se seguiría reproduciendo el audio viejo
+    guardado con los ajustes anteriores, y habría que borrar la caché a mano
+    para notar el cambio. Así cada combinación tiene su propio archivo y el
+    cambio se aplica solo.
+    """
     os.makedirs(CACHE_DIR, exist_ok=True)
-    clave = hashlib.md5(texto.encode("utf-8")).hexdigest()
+    firma = f"{texto}|{VOZ}|{VELOCIDAD}|{VOLUMEN}|{TONO}"
+    clave = hashlib.md5(firma.encode("utf-8")).hexdigest()
     return os.path.join(CACHE_DIR, f"{clave}.mp3")
 
 
@@ -66,14 +77,6 @@ async def _asegurar_audio_async(texto):
 
 def _asegurar_audio(texto):
     return asyncio.run(_asegurar_audio_async(texto))
-
-
-async def _preparar_alexa(comando):
-    """Genera en paralelo "Alexa" + el comando, solo lo que falte en caché."""
-    return await asyncio.gather(
-        _asegurar_audio_async("Alexa"),
-        _asegurar_audio_async(comando),
-    )
 
 
 # ============================================================
@@ -101,15 +104,15 @@ def _procesar_cola():
     while True:
         texto = _cola.get()
         try:
-            texto = texto.strip()
-            if texto.lower().startswith("alexa,"):
-                comando = texto.split(",", 1)[1].strip()
-                ruta_alexa, ruta_comando = asyncio.run(_preparar_alexa(comando))
-                _reproducir(ruta_alexa)
-                time.sleep(RETARDO_ALEXA)
-                _reproducir(ruta_comando)
-            else:
-                _reproducir(_asegurar_audio(texto))
+            # Toda la frase como UN solo audio, incluidos los comandos de
+            # Alexa. Antes se partía en "Alexa" + pausa fija + orden, para
+            # no esperar a la red a media frase; con la caché eso ya no hace
+            # falta, y partirla salía peor: el corte artificial entre dos
+            # archivos suena robótico, mientras que la coma de "Alexa, apaga
+            # enchufe dos" ya hace que el sintetizador ponga una pausa con
+            # entonación natural. Cuanto más se parezca a una persona
+            # hablando, mejor lo reconoce el Echo.
+            _reproducir(_asegurar_audio(texto.strip()))
         except Exception as e:
             print(f"[voz] Error reproduciendo '{texto}': {e}")
         finally:
