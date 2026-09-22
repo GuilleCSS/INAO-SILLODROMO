@@ -1,24 +1,19 @@
 """
 Lector de bioseñales con MediaPipe FaceMesh.
 
-Abre la cámara y hace el rastreo en el MISMO proceso de la aplicación (no
-hay binario externo, ni CSV intermedio, ni dos programas peleando por la
-cámara). Eso permite tres cosas que con un proceso aparte eran imposibles:
+Abre la cámara y hace el rastreo dentro del mismo proceso de la aplicación,
+sin binario externo ni CSV intermedio. Por eso se puede mostrar en la
+interfaz exactamente lo que ve el detector, mejorar la imagen antes de
+detectar y tocar la exposición de la cámara.
 
-  1. Mostrar en la interfaz exactamente los frames que ve el detector.
-  2. MEJORAR la imagen antes de detectar (los filtros sí suben la calidad
-     de detección, no son solo cosméticos).
-  3. Ajustar la cámara (exposición, brillo) porque somos sus dueños.
-
-El brillo y el contraste de la escena se miden en CADA frame y los filtros
-se ajustan sobre la marcha (ver `MejoradorImagen`). Tiene que ser así porque
-la cámara va montada en una silla que se mueve por la casa: la iluminación
-cambia todo el tiempo, y un ajuste fijo calculado al arrancar deja de servir
+El brillo y el contraste se miden en cada frame y los filtros se reajustan
+sobre la marcha (ver MejoradorImagen): la cámara va montada en una silla que
+se mueve por la casa, así que un ajuste calculado al arrancar deja de servir
 en cuanto se cambia de cuarto.
 
-generador_mediapipe() yield-ea (frame, hx, hy, au45_c, conf, y_51, y_57):
-el mismo contrato de datos que espera GazeStateController.process_frame(),
-más el frame ya listo para mostrarse.
+generador_mediapipe() entrega (frame, hx, hy, au45_c, conf, y_51, y_57), que
+es lo que espera GazeStateController.process_frame(), más el frame ya listo
+para mostrarse.
 """
 
 import os
@@ -202,20 +197,15 @@ MODEL_POINTS = np.array([
 LANDMARK_IDS = [1, 152, 33, 263, 61, 291]  # nariz, barbilla, ojos, boca
 
 
-# ============================================================
-# RECONOCIMIENTO DE ESCENARIO Y MEJORA DE IMAGEN
-# ============================================================
-
 class MejoradorImagen:
     """
-    Mide la escena real al arrancar y aplica solo el filtro que haga falta.
+    Mide la escena y aplica solo el filtro que haga falta.
 
-    Aplicar siempre el mismo filtro a ciegas puede empeorar las cosas (subir
-    el brillo de una imagen ya bien expuesta la quema y se pierden los
-    bordes que el detector necesita). Por eso primero se observa y después
-    se decide, y todo se aplica sobre la LUMINANCIA: tocar los canales de
-    color por separado desplazaría los tonos de piel, que es justo lo que
-    MediaPipe usa para encontrar la cara.
+    Filtrar a ciegas puede empeorar las cosas: subirle el brillo a una imagen
+    ya bien expuesta la quema y se pierden los bordes que el detector
+    necesita. Todo se aplica sobre la luminancia; tocar los canales de color
+    por separado desplazaría los tonos de piel, que es justo de lo que
+    MediaPipe se agarra para encontrar la cara.
     """
 
     def __init__(self):
@@ -240,25 +230,20 @@ class MejoradorImagen:
 
     def actualizar(self, frame):
         """
-        Vuelve a medir en CADA frame y ajusta los filtros sobre la marcha.
-
-        Antes se medía una sola vez al arrancar y el gamma quedaba congelado
-        toda la sesión. Eso servía para alguien sentado frente a un
-        escritorio, pero esto es una silla que se mueve por la casa: al pasar
-        de una sala iluminada a un pasillo oscuro, el gamma calculado para la
-        sala dejaba de servir y encima empeoraba la imagen, justo cuando la
-        cámara ya estaba oscureciendo por su cuenta.
+        Vuelve a medir en cada frame. Medir una sola vez al arrancar deja el
+        gamma congelado toda la sesión: al pasar de una sala iluminada a un
+        pasillo oscuro, el gamma de la sala empeoraba la imagen justo cuando
+        la cámara ya estaba oscureciendo por su cuenta.
         """
         brillo, contraste = self._medir(frame)
 
         if self.brillo is None:
             self.brillo, self.contraste = brillo, contraste
         else:
-            # Adaptación ASIMÉTRICA a propósito: se reacciona rápido cuando la
-            # imagen se oscurece (hay que recuperar la cara cuanto antes) y
-            # despacio cuando se aclara, para no perseguir un reflejo o un
-            # fogonazo pasajero. Seguir cada oscilación de la auto-exposición
-            # de la cámara solo añadiría más parpadeo.
+            # Adaptación asimétrica: rápido cuando la imagen se oscurece (hay
+            # que recuperar la cara cuanto antes) y lento cuando se aclara,
+            # para no perseguir un reflejo ni las oscilaciones de la
+            # auto-exposición de la cámara.
             sube = brillo > self.brillo
             alpha = config.get("escena_alpha_subida", 0.05) if sube else \
                     config.get("escena_alpha_bajada", 0.25)
@@ -315,20 +300,14 @@ class MejoradorImagen:
         return cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR)
 
 
-# ============================================================
-# REGISTRO DE SEÑALES (para ajustar umbrales con datos reales)
-# ============================================================
-
 class RegistroSenales:
     """
-    Guarda las señales crudas en un CSV mientras se usa la app con
-    normalidad.
+    Guarda las señales crudas en un CSV mientras se usa la app normal.
 
-    Antes esto se imprimía en consola, que es inservible aquí: la app corre
-    en pantalla completa y tapa la terminal, así que no hay forma de leer
-    los valores mientras se hacen los gestos. Con el archivo no hace falta
-    ningún asistente de calibración ni transcribir nada a mano: se usa la
-    app normal y después se analiza el registro.
+    Imprimirlas en consola no sirve de nada aquí: la app corre en pantalla
+    completa y tapa la terminal, así que no hay forma de leer los valores
+    mientras se hacen los gestos. Con el archivo se usa la app y después se
+    revisa el registro con analizar_senales.py.
     """
 
     def __init__(self):
@@ -369,9 +348,8 @@ class RegistroSenales:
                 pass
 
 
-# ============================================================
-# MEDICIONES SOBRE LA MALLA FACIAL
-# ============================================================
+# --- Mediciones sobre la malla facial ---
+
 
 def distancia(p1, p2, w, h):
     return math.hypot((p2.x - p1.x) * w, (p2.y - p1.y) * h)
@@ -407,15 +385,14 @@ def obtener_yaw(frame, face_landmarks):
 
 def obtener_control_vertical(face_landmarks):
     """
-    Señal vertical: posición de la nariz respecto al centro de los ojos,
-    normalizada por la distancia entre ojos (así acercarse o alejarse de la
-    cámara casi no la afecta). No usa pitch de solvePnP porque ahí resulta
-    mucho más ruidoso que el yaw.
+    Señal vertical: la nariz respecto al centro de los ojos, dividida entre
+    la distancia entre ojos para que acercarse a la cámara no la mueva. No se
+    usa el pitch de solvePnP porque sale mucho más ruidoso que el yaw.
 
-    Ojo: en reposo esta señal NO vale 0 (la nariz siempre está por debajo de
-    los ojos); el valor de reposo lo absorbe el auto-centrado de
-    GazeStateController, así que aquí solo importa que varíe de forma
-    consistente al subir y bajar la cara.
+    En reposo esta señal NO vale 0 — la nariz siempre está por debajo de los
+    ojos, así que ronda +2.5. Ese reposo lo absorbe el auto-centrado de
+    GazeStateController; aquí solo importa que suba y baje de forma
+    consistente con la cara.
     """
     ojo_izq = face_landmarks.landmark[33]
     ojo_der = face_landmarks.landmark[263]
@@ -427,7 +404,11 @@ def obtener_control_vertical(face_landmarks):
 
 
 def calcular_ear(face_landmarks, img_w, img_h):
-    """Eye Aspect Ratio promedio de ambos ojos (baja cuando se cierran)."""
+    """
+    Eye Aspect Ratio promedio de los dos ojos: alto de los párpados entre
+    ancho del ojo, así que baja al cerrarlos. Va dividido por el ancho para
+    que acercarse o alejarse de la cámara no lo cambie.
+    """
     def ear_de(v1a, v1b, v2a, v2b, ha, hb):
         v1 = distancia(face_landmarks.landmark[v1a], face_landmarks.landmark[v1b], img_w, img_h)
         v2 = distancia(face_landmarks.landmark[v2a], face_landmarks.landmark[v2b], img_w, img_h)
@@ -445,10 +426,6 @@ def calcular_apertura_boca(face_landmarks, img_w, img_h):
     ancho = distancia(face_landmarks.landmark[78], face_landmarks.landmark[308], img_w, img_h)
     return (apertura / (ancho + 1e-6)) * 100.0
 
-
-# ============================================================
-# GENERADOR PRINCIPAL
-# ============================================================
 
 def generador_mediapipe():
     """
@@ -504,13 +481,11 @@ def generador_mediapipe():
             if espejo:
                 frame = cv2.flip(frame, 1)
 
-            # --- Reconocimiento de escenario (solo al principio) ---
+            # Medir y filtrar va ANTES de detectar, no después: la idea es
+            # darle a MediaPipe una imagen mejor, no maquillar la vista previa.
             mejorador.actualizar(frame)
-
-            # --- Mejora de imagen ANTES de detectar ---
             frame = mejorador.aplicar(frame)
 
-            # --- Detección sobre una copia reducida ---
             alto_orig, ancho_orig = frame.shape[:2]
             if ancho_deteccion and ancho_orig > ancho_deteccion:
                 escala = ancho_deteccion / float(ancho_orig)
@@ -545,12 +520,20 @@ def generador_mediapipe():
                 if invertir_y:
                     hy = -hy
 
+                # y_51/y_57 y au45 vienen del contrato de OpenFace, que el
+                # controlador todavía espera: allá eran dos puntos del labio y
+                # la unidad de acción del parpadeo. Aquí la apertura se manda
+                # entera en y_57 (el controlador hace y_57 - y_51) y au45 se
+                # arma con el EAR.
                 apertura_boca = calcular_apertura_boca(face_landmarks, img_w, img_h)
                 y_51, y_57 = 0.0, apertura_boca
 
                 ear = calcular_ear(face_landmarks, img_w, img_h)
                 au45 = 1.0 if ear < eye_threshold else 0.0
 
+                # MediaPipe no da una confianza por frame: o encontró la cara o
+                # no. Se manda un valor alto fijo para que pase el conf_min del
+                # controlador; quien decide si el rostro sirve es el tracker.
                 conf = 0.98
 
                 if dibujar_malla:

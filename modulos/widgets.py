@@ -29,9 +29,7 @@ with open("config.json", "r") as f:
     config = json.load(f)
 
 
-# ============================================================
-# PALETA
-# ============================================================
+# --- Paleta ---
 
 BG = "#0A0F1C"
 SURFACE = "#111827"
@@ -92,9 +90,8 @@ def pill(p, rect, texto, color, relleno_alpha=45):
     p.drawText(rect, Qt.AlignCenter, texto)
 
 
-# ============================================================
-# ICONOS
-# ============================================================
+# --- Iconos ---
+
 
 def dibujar_flecha(p, centro, tam, rotacion, color):
     puntos = [(0, -0.95), (0.85, -0.05), (0.3, -0.05), (0.3, 0.9),
@@ -131,10 +128,6 @@ def dibujar_icono(p, nombre, centro, tam, color):
     elif nombre == "power":
         dibujar_power(p, centro, tam, color)
 
-
-# ============================================================
-# TILE BUTTON
-# ============================================================
 
 class TileButton(QPushButton):
     """Botón grande dibujado a mano, pensado para control con la cabeza."""
@@ -210,7 +203,7 @@ class TileButton(QPushButton):
         p.drawRoundedRect(r, radio, radio)
 
         if w > h * 1.8:
-            # ---- horizontal: icono + texto, el bloque completo centrado ----
+            # --- horizontal: icono + texto, el bloque completo centrado ---
             # (antes el icono quedaba pegado a la izquierda con el texto
             # extendiéndose a la derecha; en botones muy anchos como Avanzar/
             # Regresar eso se veía corrido hacia la orilla. Ahora se mide el
@@ -253,7 +246,7 @@ class TileButton(QPushButton):
                 p.setPen(color_fg)
                 p.drawText(QRectF(x_txt, r.top(), caja_texto, h), Qt.AlignLeft | Qt.AlignVCenter, titulo)
         else:
-            # ---- vertical: icono arriba ----
+            # --- vertical: icono arriba ---
             con_sub = bool(subtitulo) and h > 120
             s = min(w * 0.36, h * (0.36 if con_sub else 0.42))
             centro = QPointF(r.center().x(), r.top() + h * (0.38 if con_sub else 0.40))
@@ -281,11 +274,10 @@ class TileButton(QPushButton):
         p.drawEllipse(centro, s / 2, s / 2)
 
 
-# ============================================================
-# VISTA DE CÁMARA
-# ============================================================
-
-# Segmentos de los 68 puntos faciales (formato iBUG / OpenFace)
+# Segmentos de los 68 puntos faciales (formato iBUG, el que daba OpenFace).
+# Con MediaPipe el rastreo se ve directo sobre el video y no se mandan
+# puntos, así que esto solo se dibuja si algún día vuelve a haber backend sin
+# imagen; se conserva porque es el único respaldo visual en ese caso.
 SEGMENTOS = [
     (range(0, 17), False),   # mandíbula
     (range(17, 22), False),  # ceja derecha
@@ -301,9 +293,9 @@ BOCA_INT = range(60, 68)
 
 class VistaCamara(QWidget):
     """
-    Muestra la cámara en vivo con los puntos faciales de OpenFace encima.
-    Si la cámara no se puede compartir con OpenFace, dibuja solo el
-    rastreo facial (malla de 68 puntos) en tiempo real.
+    Panel de cámara. Muestra el video en vivo y encima el estado (rostro,
+    clic, pausa). Si no llega imagen, cae a dibujar solo la malla facial,
+    que al menos deja ver que el rastreo sigue vivo.
     """
 
     def __init__(self, parent=None):
@@ -319,13 +311,11 @@ class VistaCamara(QWidget):
         self.espejo = bool(config.get("camara_espejo", True))
         self.cw = float(config.get("cam_width", 1280))
         self.ch = float(config.get("cam_height", 720))
-        # Con video en vivo, por defecto se ve la cara limpia (sin la malla
-        # de 68 puntos encima), que es más útil para verificar a simple vista
-        # cómo se está moviendo la cabeza. Sin video, la malla se dibuja
-        # igual: ahí es lo único que muestra que el rastreo va funcionando.
+        # Con video se prefiere la cara limpia: se ve mejor cómo se está
+        # moviendo la cabeza. Sin video la malla se dibuja de todos modos.
         self.mostrar_malla = bool(config.get("mostrar_malla", False))
 
-    # ---------------- API ----------------
+    # --- API ---
 
     def set_frame(self, qimage):
         self.imagen = qimage
@@ -347,7 +337,7 @@ class VistaCamara(QWidget):
         if self.imagen is None:
             self.update()
 
-    # ---------------- Dibujo ----------------
+    # --- Dibujo ---
 
     def _area_video(self, r):
         """Rectángulo 16:9 (o el aspecto real) centrado dentro de r."""
@@ -500,19 +490,15 @@ class VistaCamara(QWidget):
         p.drawText(QRectF(area.left(), y + alto + 4, area.width(), alto), Qt.AlignCenter, sub)
 
 
-# ============================================================
-# INDICADOR DE CABEZA (mini joystick)
-# ============================================================
-
 class IndicadorCabeza(QWidget):
+    """Mini joystick: dónde está la cabeza respecto al umbral de gesto."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Desviación respecto al centro APRENDIDO, en fracción del umbral de
-        # gesto: 0 = en reposo, ±1 = justo en el umbral. Antes se dibujaba
-        # con hx/hy crudos escalados por constantes heredadas de OpenFace,
-        # así que con otra escala de señal el punto quedaba clavado en un
-        # borde y el diagrama mostraba la cabeza girada de forma permanente.
+        # Desviación respecto al centro aprendido, en fracción del umbral:
+        # 0 = en reposo, ±1 = justo en el umbral. Dibujar hx/hy crudos con una
+        # escala fija no sirve — depende del backend, y el punto termina
+        # clavado en un borde mostrando la cabeza girada todo el tiempo.
         self.frac_x = 0.0
         self.frac_y = 0.0
         self.rostro = False
@@ -532,10 +518,9 @@ class IndicadorCabeza(QWidget):
         p.setBrush(QColor(SURFACE_2))
         p.drawEllipse(c, R, R)
 
-        # La caja punteada es el UMBRAL REAL de gesto (fracción ±1): dentro
-        # es zona muerta, fuera dispara un paso. Así el diagrama muestra
-        # exactamente lo que decide la navegación, y sirve para verificar la
-        # calibración a simple vista.
+        # La caja punteada es el umbral real de gesto: dentro es zona muerta,
+        # fuera dispara un paso. Sirve para ver de un vistazo si la
+        # calibración quedó bien.
         escala = (R - 7) / 1.4      # una fracción de 1.4 llega al borde
         lado_caja = escala
         zona = QRectF(c.x() - lado_caja, c.y() - lado_caja, 2 * lado_caja, 2 * lado_caja)
@@ -563,18 +548,15 @@ class IndicadorCabeza(QWidget):
         p.drawEllipse(punto, 6.5, 6.5)
 
 
-# ============================================================
-# INDICADOR DE BOCA (barra con umbral)
-# ============================================================
-
 class IndicadorBoca(QWidget):
+    """Barra de apertura de boca con la marca del umbral de clic."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.apertura = 0.0
         self.clic = False
-        # Umbral en vivo (auto-ajustado a la boca cerrada real de cada
-        # persona), no un valor fijo — se actualiza en cada frame.
+        # El umbral llega en vivo desde el controlador, ya ajustado a la boca
+        # cerrada real de la persona. Esto es solo el valor de arranque.
         self.umbral = float(config.get("boca_delta_on", 15.0))
 
     def actualizar(self, apertura, clic, umbral=None):

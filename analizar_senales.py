@@ -4,10 +4,12 @@ Analiza diagnostico_senales.csv y propone los umbrales de navegación.
 Uso:
     python analizar_senales.py
 
-La idea es no tener que adivinar los umbrales ni pedirle a nadie que
-transcriba números de una consola tapada por la app. Se usa la aplicación
-con normalidad (moviendo la cabeza a los cuatro lados unas cuantas veces),
-y este script mira el registro para responder dos cosas:
+Es la alternativa a la calibración de arranque: en vez de pedir gestos a
+propósito, mira lo que la persona hizo usando la app de verdad. Sirve sobre
+todo para revisar después si los umbrales de la sesión quedaron bien.
+
+Se usa la aplicación con normalidad (moviendo la cabeza a los cuatro lados
+unas cuantas veces) y este script mira el registro para responder dos cosas:
 
   1. ¿Dónde está el reposo de esta persona? (la postura neutral real)
   2. ¿Hasta dónde llega cuando de verdad hace un gesto hacia cada lado?
@@ -95,6 +97,8 @@ def analizar(ruta):
 
 
 def aplicar(umbrales, ruta_config="config.json"):
+    """Escribe los umbrales en config.json. Son el respaldo: si la sesión
+    tiene calibracion.json, el controlador usa esa y estos ni se miran."""
     with open(ruta_config) as f:
         cfg = json.load(f)
     cfg.update(umbrales)

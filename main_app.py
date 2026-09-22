@@ -1,3 +1,12 @@
+"""
+Aplicación principal: interfaz, hilo de visión y control de la silla.
+
+Arranca con `python main_app.py`. Los tres hilos que conviven aquí son el de
+Qt (interfaz), el de visión (cámara + MediaPipe + GazeStateController) y el
+de voz, que vive dentro de voice_synth. La comunicación entre ellos es
+siempre por señales de Qt; nada toca widgets desde fuera del hilo de Qt.
+"""
+
 import os
 import sys
 import json
@@ -22,23 +31,14 @@ from modulos.hardware_serial import DomoticaController
 from modulos.voice_synth import hablar_en_segundo_plano
 from modulos.calibracion_ui import DialogoCalibracion
 
-
-# ============================================================
-# CONFIGURACIÓN
-# ============================================================
-
 with open("config.json", "r") as f:
     config = json.load(f)
 
 RUTA_UI = os.path.join(BASE_DIR, "interfaz.ui")
 
-# (texto en pantalla, frase para encender, frase para apagar)
-#
-# Las frases van completas, sin el "Alexa," inicial que se antepone solo.
-# Antes se guardaba el nombre del aparato y las órdenes se armaban siempre
-# como "enciende X" / "apaga X", pero no todo se pide así: Netflix se pone y
-# se quita. Escribir la frase entera deja claro qué se le dice a Alexa y
-# permite cualquier verbo.
+# (texto en pantalla, frase para encender, frase para apagar). Las frases van
+# completas porque no todo se pide con "enciende/apaga": Netflix se pone y se
+# quita. El "Alexa," inicial lo antepone voice_synth.
 DISPOSITIVOS = [
     ("Rasuradora", "enciende rasuradora", "apaga rasuradora"),
     ("Secadora",   "enciende secadora",   "apaga secadora"),
@@ -60,11 +60,8 @@ MOVIMIENTOS = {
 TIEMPO_SIN_SENAL = 0.8
 
 
-# ============================================================
-# HILO DE VISIÓN (MediaPipe: cámara + rastreo, un solo proceso)
-# ============================================================
-
 class HiloProcesamiento(QThread):
+    """Cámara, MediaPipe y controlador, todo fuera del hilo de la interfaz."""
 
     senal_mensaje = pyqtSignal(str)
     senal_listo = pyqtSignal()
@@ -92,21 +89,19 @@ class HiloProcesamiento(QThread):
                     self.senal_estado.emit(estado)
                 self._emitir_frame(frame)
         except Exception as e:
-            # El traceback completo a consola: si el hilo de visión muere, la
-            # cámara se libera (se ve como que "se prende y se apaga") y el
-            # mensaje de la barra de estado puede quedar tapado por un
-            # diálogo en pantalla completa. Sin esto el fallo es invisible.
+            # Si este hilo muere, la cámara se libera y se ve como que "se
+            # prende y se apaga". El mensaje de la barra de estado puede
+            # quedar tapado por el diálogo de calibración, así que el
+            # traceback va también a la consola.
             traceback.print_exc()
             self.senal_mensaje.emit(f"Error en visión: {e}")
 
     def _emitir_frame(self, frame_bgr):
         """
-        La vista previa se manda con freno de mano a propósito. Mandar un
-        QImage de 1280x720 (≈2.7 MB por copia) 30 veces por segundo satura
-        la cola de eventos de Qt: si la interfaz no alcanza a consumirlos,
-        se acumulan sin límite y todo se siente trabado. El control sí va a
-        toda velocidad (senal_estado), pero el panel de cámara no necesita
-        más de ~15 fps ni resolución completa para verse bien.
+        La vista previa va frenada a propósito: un QImage de 1280x720 son
+        ~2.7 MB por copia, y a 30 por segundo se satura la cola de eventos de
+        Qt y todo se siente trabado. El control sigue yendo a toda velocidad
+        por senal_estado; el panel de cámara se ve bien con 15 fps.
         """
         ahora = time.time()
         intervalo = 1.0 / max(1, int(config.get("vista_fps", 15)))
@@ -134,11 +129,15 @@ class HiloProcesamiento(QThread):
         self.soltar_clic()
 
 
-# ============================================================
-# VENTANA PRINCIPAL
-# ============================================================
-
 class ControlCentral(QMainWindow):
+    """
+    La ventana. Carga interfaz.ui, arranca el hilo de visión y traduce lo que
+    ese hilo reporta en botones, chips de estado y órdenes a la silla.
+
+    Los botones de la interfaz NO los aprieta el código: el controlador mueve
+    el cursor real encima de cada uno y la boca hace el clic, así que la ruta
+    es la misma que si alguien usara el mouse.
+    """
 
     def __init__(self):
         super().__init__()
@@ -164,7 +163,7 @@ class ControlCentral(QMainWindow):
         self._configurar_sos()
         self.btnRecentrar.clicked.connect(self.recentrar_cursor)
 
-        # ---------- Visión ----------
+        # --- Visión ---
         self.hilo = HiloProcesamiento()
         self.hilo.senal_mensaje.connect(self.mostrar_mensaje)
         self.hilo.senal_listo.connect(self._recalcular_nodos_navegacion)
@@ -174,7 +173,7 @@ class ControlCentral(QMainWindow):
         self.hilo.senal_frame.connect(self._frame_camara)
         self.hilo.start()
 
-        # ---------- Temporizadores ----------
+        # --- Temporizadores ---
         self.timer_reloj = QTimer(self)
         self.timer_reloj.timeout.connect(self._tick_reloj)
         self.timer_reloj.start(1000)
@@ -184,7 +183,7 @@ class ControlCentral(QMainWindow):
         self.timer_seguridad.timeout.connect(self._vigilancia)
         self.timer_seguridad.start(200)
 
-        # ---------- Atajos (para quien acompaña al usuario) ----------
+        # --- Atajos (para quien acompaña al usuario) ---
         QShortcut(QKeySequence(Qt.Key_Escape), self, activated=self.close)
         QShortcut(QKeySequence(Qt.Key_Space), self, activated=self.detener_movimiento)
         QShortcut(QKeySequence("Ctrl+R"), self, activated=self.recentrar_cursor)
@@ -193,9 +192,7 @@ class ControlCentral(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Shift+E"), self, activated=self.activar_emergencia)
         QShortcut(QKeySequence("Ctrl+E"), self, activated=self.cancelar_emergencia)
 
-    # --------------------------------------------------------
-    # CONFIGURACIÓN DE LA INTERFAZ
-    # --------------------------------------------------------
+    # --- Armado de la interfaz ---
 
     def abrir_calibracion(self):
         """Mide el reposo y el alcance de gesto de hoy. Hace falta porque ese
@@ -218,11 +215,10 @@ class ControlCentral(QMainWindow):
             self.mostrar_mensaje("Calibración saltada: se usan los valores guardados")
 
     def recentrar_cursor(self):
-        """Fuerza el centro de referencia de los gestos a la postura actual y
-        regresa el foco a Avanzar. Útil si los gestos empiezan a sentirse
-        desalineados (se disparan solos, o cuesta más de lo normal) tras
-        acomodarse o cansarse durante la sesión. No hace falta calibrar nada
-        de antemano — la navegación por gestos ya se auto-ajusta sola."""
+        """Fuerza el centro de los gestos a la postura actual y regresa el
+        foco a Avanzar, sin repetir la calibración completa. Es el arreglo
+        rápido de media sesión, cuando los gestos empiezan a dispararse solos
+        o a costar de más porque la persona se acomodó o se cansó."""
         resetear_usuario_principal()
         if self.hilo.controller:
             self.hilo.controller.recentrar()
@@ -230,6 +226,9 @@ class ControlCentral(QMainWindow):
             hablar_en_segundo_plano("Centro y usuario actualizados")
 
     def _configurar_sos(self):
+        """El botón de SOS se arma aquí y no en el .ui: va metido a la fuerza
+        en el encabezado, justo antes del reloj, y cambia de texto y de color
+        según haya emergencia o no."""
         self.btnSOS = QPushButton("SOS", self.frameHeader)
         self.btnSOS.setObjectName("btnSOS")
         self.btnSOS.setCursor(Qt.PointingHandCursor)
@@ -287,15 +286,16 @@ class ControlCentral(QMainWindow):
             self.activar_emergencia("manual")
 
     def _registrar_evento_emergencia(self, evento):
+        """Bitácora en disco de todo lo que tenga que ver con emergencias. La
+        app corre en pantalla completa, así que la consola no se ve: este
+        archivo es la única forma de reconstruir después qué pasó."""
         try:
             with open("eventos_emergencia.log", "a", encoding="utf-8") as f:
                 f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} | {evento}\n")
         except OSError:
             pass
 
-    # --------------------------------------------------------
-    # EMERGENCIA (ojos cerrados sostenidos mucho más tiempo que el de pausa)
-    # --------------------------------------------------------
+    # --- Emergencia ---
 
     def activar_emergencia(self, origen="manual"):
         """Suena una alarma repetida y bloquea la silla hasta que se cancele
@@ -341,6 +341,15 @@ class ControlCentral(QMainWindow):
         hablar_en_segundo_plano(mensaje)
 
     def _gestionar_rostro_perdido(self, rostro_detectado):
+        """
+        Escalera de tres peldaños cuando se pierde la cara: al segundo se
+        detiene la silla y se pregunta en voz alta, y a los seis se dispara
+        el SOS. En cuanto la cara vuelve, todo se deshace solo.
+
+        La espera antes del primer aviso existe porque perder el rostro un
+        instante es normal (un giro brusco, una sombra); avisar en el primer
+        frame sería una falsa alarma constante.
+        """
         if rostro_detectado:
             if self._emergencia_activa and self._emergencia_origen == "rostro_perdido":
                 self.cancelar_emergencia("Rostro recuperado. Emergencia cancelada.")
@@ -391,6 +400,9 @@ class ControlCentral(QMainWindow):
             btn.released.connect(self.detener_movimiento)
 
     def _configurar_domotica(self):
+        """Engancha las seis tarjetas del .ui a DISPOSITIVOS. Los widgets se
+        buscan por nombre (tarjeta_1, btn_on_1, lbl_estado_1…), así que el
+        orden de esa lista es el orden en que salen en pantalla."""
         self.tarjetas = []
         for i, (visual, frase_on, frase_off) in enumerate(DISPOSITIVOS, start=1):
             tarjeta = {
@@ -424,9 +436,7 @@ class ControlCentral(QMainWindow):
             "Botón Recentrar (o Ctrl+R): reajusta gestos y usuario principal"
         )
 
-    # --------------------------------------------------------
-    # NODOS DE NAVEGACIÓN (dónde teletransportar el cursor por cada foco)
-    # --------------------------------------------------------
+    # --- Nodos de navegación ---
 
     def _recalcular_nodos_navegacion(self):
         """Informa a GazeStateController la posición real en pantalla de cada
@@ -464,9 +474,7 @@ class ControlCentral(QMainWindow):
         # Los botones cambian de posición al reacomodarse el layout.
         QTimer.singleShot(50, self._recalcular_nodos_navegacion)
 
-    # --------------------------------------------------------
-    # ESTILOS DINÁMICOS (propiedades usadas por el QSS del .ui)
-    # --------------------------------------------------------
+    # --- Estilos dinámicos (los lee el QSS del .ui) ---
 
     @staticmethod
     def _repulir(widget):
@@ -487,9 +495,7 @@ class ControlCentral(QMainWindow):
         self._repulir(tarjeta["frame"])
         self._repulir(tarjeta["estado"])
 
-    # --------------------------------------------------------
-    # CÁMARA (un solo origen: el mismo hilo que hace el rastreo con MediaPipe)
-    # --------------------------------------------------------
+    # --- Cámara ---
 
     def _frame_camara(self, imagen):
         if not config.get("vista_camara", True):
@@ -503,9 +509,7 @@ class ControlCentral(QMainWindow):
         self.vistaCamara.set_sin_video()
         self.lblInfoCamara.setText(f"{motivo} · mostrando rastreo")
 
-    # --------------------------------------------------------
-    # MOVIMIENTO (mantener presionado)
-    # --------------------------------------------------------
+    # --- Movimiento de la silla ---
 
     def iniciar_movimiento(self, mov):
         if self._emergencia_activa:
@@ -537,11 +541,12 @@ class ControlCentral(QMainWindow):
                 btn.setDown(False)
             self.detener_movimiento("Seguridad: se perdió la señal de la cámara · silla detenida")
 
-    # --------------------------------------------------------
-    # DOMÓTICA
-    # --------------------------------------------------------
+    # --- Domótica ---
 
     def encender_dispositivo(self, tarjeta, frase):
+        # La tarjeta se marca encendida de inmediato, aunque en realidad no
+        # sabemos si Alexa obedeció: no hay canal de vuelta. Es un recordatorio
+        # de lo último que se pidió, no el estado real del aparato.
         hablar_en_segundo_plano(f"Alexa, {frase}")
         self._marcar_tarjeta(tarjeta, True)
         self.mostrar_mensaje(f"Encendiendo: {tarjeta['nombre']}")
@@ -551,14 +556,15 @@ class ControlCentral(QMainWindow):
         self._marcar_tarjeta(tarjeta, False)
         self.mostrar_mensaje(f"Apagando: {tarjeta['nombre']}")
 
-    # --------------------------------------------------------
-    # ESTADO
-    # --------------------------------------------------------
+    # --- Estado en pantalla ---
 
     def mostrar_mensaje(self, texto):
         self.label_estado.setText(texto)
 
     def actualizar_estado(self, e):
+        """Llega una vez por frame desde el hilo de visión, con el diccionario
+        que arma GazeStateController._estado. Es el único punto donde la
+        interfaz se entera de lo que está haciendo la cara."""
         self._ultimo_frame = time.time()
 
         if self._dialogo_calib is not None:
@@ -590,9 +596,7 @@ class ControlCentral(QMainWindow):
     def _tick_reloj(self):
         self.lblReloj.setText(QTime.currentTime().toString("HH:mm"))
 
-    # --------------------------------------------------------
-    # CERRAR
-    # --------------------------------------------------------
+    # --- Cierre ---
 
     def closeEvent(self, event):
         self.timer_emergencia.stop()
@@ -600,13 +604,12 @@ class ControlCentral(QMainWindow):
         self.hilo.detener()
         self.hilo.wait(500)
         if self.hilo.isRunning():
+            # El hilo se quedó atorado dentro de una lectura de la cámara. Se
+            # mata: si no, la ventana se cierra y el proceso sigue vivo con la
+            # cámara tomada, y ya no se puede volver a abrir el programa.
             self.hilo.terminate()
         event.accept()
 
-
-# ============================================================
-# MAIN
-# ============================================================
 
 if __name__ == "__main__":
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)

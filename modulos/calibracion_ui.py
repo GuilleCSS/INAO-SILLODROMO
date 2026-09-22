@@ -1,23 +1,17 @@
 """
 Calibración de gestos al iniciar la sesión.
 
-Por qué existe (y por qué el intento anterior se había quitado): la versión
-vieja intentaba mapear la cabeza a un punto exacto de la pantalla, que era
-un problema mucho más difícil del necesario. Esta solo mide dos cosas:
+Mide dos cosas nada más: dónde queda el reposo de la persona hoy, y hasta
+dónde llega su gesto cómodo hacia cada lado. No intenta mapear la cabeza a
+un punto de la pantalla — ese problema es mucho más difícil y no hace falta
+para navegar por saltos.
 
-  1. Dónde está el REPOSO real de la persona hoy.
-  2. Hasta dónde llega su gesto cómodo hacia cada lado.
+Hace falta calibrar porque el alcance cambia muchísimo de un día a otro:
+medido en dos sesiones reales, 1.81 y 0.91 hacia la izquierda, más del
+doble, según qué tan lejos se siente la persona y el ángulo de la cámara.
 
-Hace falta porque ese alcance varía muchísimo entre sesiones —medido en dos
-sesiones reales: 1.81 y 0.91 hacia la izquierda, más del doble— según qué
-tan lejos se siente la persona, el ángulo de la cámara y la postura. Ningún
-umbral fijo sirve para ambas, así que se miden al arrancar.
-
-El resultado se guarda en calibracion.json y GazeStateController lo usa en
-lugar de los umbrales por defecto de config.json.
-
-Se puede saltar con Esc: en ese caso se usan los valores de config.json y el
-centro se aprende solo, como antes.
+El resultado va a calibracion.json y GazeStateController lo prefiere sobre
+los umbrales de config.json. Se puede saltar con Esc.
 """
 
 import json
@@ -172,7 +166,7 @@ class DialogoCalibracion(QDialog):
         self._timer.timeout.connect(self._tick)
         self._timer.start()
 
-    # -- alimentado por la ventana principal --------------------------
+    # --- Alimentado por la ventana principal ---
 
     def actualizar_lectura(self, hx, hy, rostro=True):
         self._rostro = rostro
@@ -189,7 +183,7 @@ class DialogoCalibracion(QDialog):
             picos = [abs((m[0] if eje == "x" else m[1]) - base) for m in self._muestras]
             self.barra_senal.actualizar(actual, max(picos) if picos else 0.0, eje)
 
-    # -- flujo ---------------------------------------------------------
+    # --- Flujo ---
 
     def _entrar_paso(self):
         nombre, texto, eje, _ = PASOS[self._paso]
@@ -252,11 +246,9 @@ class DialogoCalibracion(QDialog):
             ys = sorted(m[1] for m in self._muestras)
             self.centro = (xs[len(xs) // 2], ys[len(ys) // 2])
             # Temblor en reposo: cuánto oscila la señal con la cabeza quieta.
-            # Es el dato que faltaba: los márgenes calculados como fracción
-            # fija del umbral podían quedar por debajo de este ruido, y
-            # entonces la cabeza volvía al centro sin que el sistema lo
-            # reconociera (navegación bloqueada). Se toma un percentil alto
-            # en vez del máximo para que un frame suelto no lo infle.
+            # Sin este dato, los márgenes de regreso al centro pueden quedar
+            # por debajo del propio ruido y la navegación se bloquea. Va por
+            # percentil alto para que un frame suelto no lo infle.
             def dispersion(vals, centro):
                 d = sorted(abs(v - centro) for v in vals)
                 return d[int(len(d) * 0.9)] if d else 0.0
@@ -275,11 +267,9 @@ class DialogoCalibracion(QDialog):
             hacia_alla = sorted(d for d in desv if d > 0)
             self.alcances[nombre] = (hacia_alla[int(len(hacia_alla) * 0.8)]
                                      if hacia_alla else 0.0)
-            # Guardamos también cuánto se movió al REVÉS. Si el recorrido fue
-            # casi todo al revés, el eje está invertido respecto a lo que se
-            # pidió, y hay que avisarlo: si no, el alcance sale 0, el umbral
-            # cae al piso de seguridad y los gestos de ese eje terminan
-            # moviendo el foco al lado contrario sin explicación.
+            # Cuánto se movió al revés de lo pedido. Si fue casi todo al
+            # revés, ese eje tiene el signo cambiado; sin avisarlo, el alcance
+            # sale 0 y los gestos terminan moviendo el foco al lado contrario.
             al_reves = sorted(-d for d in desv if d < 0)
             self._al_reves[nombre] = (al_reves[int(len(al_reves) * 0.8)]
                                       if al_reves else 0.0)

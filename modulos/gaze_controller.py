@@ -1,3 +1,5 @@
+"""Convierte los gestos de la cara en acciones de mouse."""
+
 import os
 import time
 import json
@@ -9,6 +11,10 @@ with open('config.json', 'r') as f:
     config = json.load(f)
 
 
+# A dónde se va el foco desde cada botón con cada gesto. Las direcciones que
+# no aparecen son paredes: ahí el gesto no hace nada y el foco se queda.
+# Avanzar y Regresar están partidos en dos mitades (_izq/_der) para poder
+# bajar a la columna de domótica que les toca sin cruzar toda la pantalla.
 GRAFO_NAVEGACION = {
     "avanzar_izq": {"derecha": "avanzar_der", "abajo": "izquierda"},
     "avanzar_der": {"izquierda": "avanzar_izq", "abajo": "derecha"},
@@ -48,19 +54,14 @@ ETIQUETAS_FOCO_BASE = {
 
 class GazeStateController:
     """
-    Traduce las bioseñales de OpenFace en acciones de mouse.
+    Traduce las bioseñales de la cara en acciones de mouse.
 
-    - Cabeza  -> NO mueve un cursor libre y NO necesita calibración: cada
-                 gesto claro hacia arriba, abajo, izquierda o derecha (salir
-                 de la zona central y volver a ella) mueve el foco UN paso en
-                 el grafo de navegación (ver GRAFO_NAVEGACION) y
-                 teletransporta el cursor real al centro de ese botón. El
-                 "centro" de referencia se auto-ajusta solo, siguiendo la
-                 postura de descanso real de la persona.
-    - Boca    -> abrirla PRESIONA el clic y lo MANTIENE (sobre el botón
-                 donde está el foco); cerrarla lo SUELTA. Totalmente
-                 independiente de la navegación por gestos de arriba.
-    - Ojos    -> cerrarlos `blink_hold_time` segundos pausa / reanuda el sistema.
+    - Cabeza: cada gesto (salir de la zona central y volver) mueve el foco un
+      paso en GRAFO_NAVEGACION y teletransporta el cursor al centro de ese
+      botón. No es un cursor libre. El centro de referencia se auto-ajusta a
+      la postura de descanso real.
+    - Boca: abrirla presiona el clic y lo mantiene; cerrarla lo suelta.
+    - Ojos: cerrarlos `blink_hold_time` segundos pausa o reanuda el sistema.
     """
 
     def __init__(self):
@@ -68,10 +69,9 @@ class GazeStateController:
         self.blink_start_time = None
         self.blink_action_triggered = False
 
-        # Emergencia: ojos cerrados mucho más tiempo que el de pausa.
-        # `emergencia_disparada` evita repetir el evento cada frame mientras
-        # se sigue con los ojos cerrados; los otros dos son banderas de un
-        # solo frame para avisarle a main_app.py (se limpian en _estado()).
+        # emergencia_disparada evita repetir el evento cada frame mientras se
+        # sigue con los ojos cerrados; los otros dos son banderas de un solo
+        # frame para avisarle a main_app (se limpian en _estado).
         self.emergencia_disparada = False
         self._emergencia_evento = False
         self._emergencia_cancelar = False
@@ -119,20 +119,16 @@ class GazeStateController:
 
         self._navegacion_congelada = False
 
-        # Temblor natural de la señal con la cabeza quieta, medido en la
-        # calibración. Sin esto el margen de "ya regresó al centro" se
-        # calculaba como una fracción fija del umbral y podía quedar MÁS
-        # CHICO que el propio temblor: la cabeza volvía al centro pero
-        # fallaba por centésimas y la navegación se quedaba bloqueada.
+        # Temblor de la señal con la cabeza quieta, medido en la calibración.
+        # Como fracción fija del umbral, el margen de regreso al centro podía
+        # quedar más chico que el propio temblor y la navegación se atoraba.
         self._ruido_x = 0.0
         self._ruido_y = 0.0
 
         self._umbrales_cal = None
         self.cargar_calibracion()
 
-    # --------------------------------------------------------
-    # CALIBRACIÓN DE LA SESIÓN
-    # --------------------------------------------------------
+    # --- Calibración de la sesión ---
 
     def cargar_calibracion(self, ruta="calibracion.json"):
         """Toma el centro y los umbrales medidos al inicio de la sesión.
@@ -162,9 +158,7 @@ class GazeStateController:
         self._tiempo_ultimo_paso = None
         return True
 
-    # --------------------------------------------------------
-    # NODOS DE NAVEGACIÓN (posiciones reales en pantalla)
-    # --------------------------------------------------------
+    # --- Nodos de navegación ---
 
     def set_nodos(self, nodos, etiquetas=None):
         """`nodos`: {nombre_de_nodo: (x, y)} con la posición real en pantalla
@@ -194,9 +188,7 @@ class GazeStateController:
         self._tiempo_ultimo_paso = None
         self._teleportar_cursor()
 
-    # --------------------------------------------------------
-    # CLIC SOSTENIDO
-    # --------------------------------------------------------
+    # --- Clic sostenido ---
 
     def _presionar(self):
         if not self.clic_mantenido:
@@ -213,14 +205,14 @@ class GazeStateController:
         self._frames_cerrada = 0
 
     def _refrescar_apertura_base(self, apertura):
-        """Recalcula la base de "boca cerrada" como un percentil bajo de las
-        lecturas recientes. La boca pasa cerrada la mayor parte del tiempo,
-        así que ese percentil bajo ES el reposo real — y se recalcula
-        siempre, lo que permite que una detección trabada se destrabe sola."""
+        """Base de "boca cerrada" como percentil bajo de las lecturas
+        recientes: la boca pasa cerrada casi todo el tiempo, así que ese
+        percentil es el reposo real. Se recalcula siempre, incluso con el
+        clic puesto, para que una detección trabada se destrabe sola."""
         self._aperturas.append(apertura)
 
-        # Recalcular cada ciertos frames (no en cada uno): ordenar la ventana
-        # completa 30 veces por segundo no aporta nada y solo gasta CPU.
+        # Cada 10 frames y no en cada uno: ordenar la ventana completa 30
+        # veces por segundo solo gasta CPU.
         self._frames_desde_base += 1
         if self._apertura_base is not None and self._frames_desde_base < 10:
             return
@@ -234,27 +226,23 @@ class GazeStateController:
     def _actualizar_boca(self, apertura, ojos_cerrados=False, tiempo_ojos_cerrados=0.0):
         self._refrescar_apertura_base(apertura)
 
-        # Con los ojos cerrados no se hace clic: la persona no está viendo
-        # sobre qué botón está el foco, y con la silla eso significa ponerla
-        # en marcha a ciegas. Un bostezo (ojos cerrados + boca abierta) es
-        # justo la combinación que hay que evitar.
+        # Con los ojos cerrados no se hace clic: la persona no ve sobre qué
+        # botón está el foco, y con la silla eso es arrancarla a ciegas.
         if ojos_cerrados:
             if not self.clic_mantenido:
-                # No se arranca un clic nuevo. Se reinicia el contador para
-                # que al abrir los ojos no dispare por frames acumulados.
+                # Se reinicia el contador para que al abrir los ojos no
+                # dispare por los frames que se acumularon.
                 self._frames_abierta = 0
                 return
-            # Un clic YA puesto sobrevive a un parpadeo normal (~0.2 s): si
-            # se soltara con cada parpadeo, no se podría avanzar de forma
-            # sostenida. Pero si los ojos siguen cerrados más allá de eso,
-            # se suelta por seguridad.
+            # Un clic ya puesto sobrevive a un parpadeo normal (~0.2 s), o no
+            # se podría avanzar de forma sostenida. Más allá de eso, se suelta.
             if tiempo_ojos_cerrados >= config.get("clic_ojos_gracia_seg", 0.6):
                 self.soltar()
                 return
 
-        # Umbrales como margen por encima de la boca cerrada real de esta
-        # persona (auto-ajustada), no números absolutos que rara vez
-        # coinciden exactos con la cámara/distancia real de cada quien.
+        # Los umbrales son un margen por encima de la boca cerrada real de
+        # esta persona, no números absolutos: la apertura medida depende de
+        # la cámara y de qué tan lejos esté sentada.
         delta_on = config.get("boca_delta_on", 15.0)
         delta_off = config.get("boca_delta_off", 6.0)
         umbral_on = self._apertura_base + delta_on
@@ -270,9 +258,7 @@ class GazeStateController:
             if self._frames_cerrada >= frames_req:
                 self.soltar()
 
-    # --------------------------------------------------------
-    # ESTADO PARA LA INTERFAZ
-    # --------------------------------------------------------
+    # --- Estado para la interfaz ---
 
     def _estado(self, rostro):
         base = self._apertura_base if self._apertura_base is not None else self.ultima_apertura
@@ -297,9 +283,7 @@ class GazeStateController:
             "puntos": self._puntos,
         }
 
-    # --------------------------------------------------------
-    # PROCESAMIENTO POR FRAME
-    # --------------------------------------------------------
+    # --- Procesamiento por frame ---
 
     def process_frame(self, hx, hy, au45_c, conf, y_51, y_57, puntos=None):
         current_time = time.time()
@@ -317,23 +301,15 @@ class GazeStateController:
 
         self.ultima_apertura = y_57 - y_51
 
-        # El estado de los ojos NO se condiciona a la boca.
-        #
-        # Antes se ignoraba "ojos cerrados" mientras la boca estuviera
-        # abierta, porque OpenFace malinterpretaba la cara y daba falsos
-        # positivos de AU45 al abrirla. Aquí la señal de ojos sale del EAR,
-        # calculado con los puntos de los párpados, que no se mueven al
-        # abrir la boca (medido en una sesión real: EAR 0.28 con la boca
-        # abierta contra 0.25 cerrada, ambos muy por encima del umbral).
-        #
-        # Mantener aquel guardia era peligroso: con los ojos cerrados y la
-        # boca abierta el sistema no pausaba, no disparaba la emergencia y
-        # SÍ hacía clic. Un bostezo es exactamente esa combinación.
+        # Los ojos no se condicionan a la boca. Con MediaPipe la señal sale
+        # del EAR (párpados), que no se mueve al abrir la boca: medido, 0.28
+        # con la boca abierta contra 0.25 cerrada. Ignorar los ojos mientras
+        # la boca estuviera abierta era peligroso, porque un bostezo es justo
+        # esa combinación y ahí el sistema no pausaba pero sí hacía clic.
         is_eyes_closed = (au45_c >= 1.0)
 
-        # 1. MECANISMO DE PAUSA (ojos cerrados) + EMERGENCIA (ojos cerrados
-        # mucho más tiempo, un umbral bien separado del de pausa para que no
-        # se confundan).
+        # 1. Pausa (ojos cerrados) y emergencia (mucho más tiempo, con el
+        # umbral bien separado para que no se confundan).
         tiempo_ojos_cerrados = 0.0
         if is_eyes_closed:
             if self.blink_start_time is None:
@@ -348,12 +324,9 @@ class GazeStateController:
                     self.soltar()
                     hablar_en_segundo_plano("Sistema pausado")
                 else:
-                    # En este instante los ojos siguen cerrados (recién se
-                    # cumplió el tiempo sostenido) y el sistema ya está
-                    # activo de nuevo — sin este aviso, la persona no sabe
-                    # que ya puede (y debe) abrir los ojos, y si los sigue
-                    # cerrando por costumbre puede volver a pausar el sistema
-                    # sin querer al cumplirse otro `blink_hold_time`.
+                    # Los ojos siguen cerrados en este instante. Sin el aviso,
+                    # la persona los deja cerrados y vuelve a pausar sin
+                    # querer al cumplirse otro blink_hold_time.
                     hablar_en_segundo_plano("Sistema activado. Abre los ojos.")
 
             tiempo_emergencia = config.get("emergencia_hold_time", 10.0)
@@ -370,29 +343,26 @@ class GazeStateController:
         if not self.system_enabled:
             return self._estado(rostro=True)
 
-        # 2. CLIC SOSTENIDO POR BOCA (sobre el botón donde está el foco)
+        # 2. Clic sostenido con la boca, sobre el botón donde está el foco
         self._actualizar_boca(self.ultima_apertura, is_eyes_closed, tiempo_ojos_cerrados)
 
-        # 3. SUAVIZADO EMA LIGERO (solo para no reaccionar a un frame suelto con ruido)
+        # 3. EMA ligera, solo para no reaccionar a un frame suelto con ruido
         alpha = config.get("suavizado_alpha", 0.2)
         self.hx_suavizado = (alpha * hx) + ((1 - alpha) * self.hx_suavizado)
         self.hy_suavizado = (alpha * hy) + ((1 - alpha) * self.hy_suavizado)
 
-        # 4. NAVEGACIÓN POR SALTOS (solo cabeza, sin gestos adicionales).
-        #
-        # Con el clic PRESIONADO no se navega: el clic es un botón del mouse
-        # de verdad, así que mover el foco mientras está apretado arrastra el
-        # cursor fuera del botón y lo suelta sobre otro. Estando sobre
-        # "Avanzar" con la silla en marcha, eso es justo lo que no debe
-        # pasar. Mientras la boca esté abierta, la cabeza queda libre.
+        # 4. Navegación. Con el clic presionado no se navega: el clic es un
+        # botón real del mouse, así que mover el foco mientras está apretado
+        # arrastraría el cursor fuera del botón y lo soltaría sobre otro.
+        # Sobre "Avanzar", con la silla en marcha, eso es justo lo que no
+        # debe pasar; mientras la boca esté abierta la cabeza queda libre.
         if self.clic_mantenido:
             self._navegacion_congelada = True
         else:
             if self._navegacion_congelada:
-                # Al soltar, la cabeza puede haber quedado desviada. Se toma
-                # la zona actual como punto de partida para que ese desvío
-                # acumulado no dispare un salto inmediato: hay que volver al
-                # centro y salir otra vez para que cuente.
+                # Al soltar, la cabeza pudo quedar desviada. Se parte de la
+                # zona actual para que ese desvío no dispare un salto: hay
+                # que volver al centro y salir otra vez.
                 self._resincronizar_zonas(self.hx_suavizado, self.hy_suavizado)
                 self._navegacion_congelada = False
             self._actualizar_navegacion(self.hx_suavizado, self.hy_suavizado, current_time)
@@ -412,9 +382,7 @@ class GazeStateController:
             dy, umbrales["arriba"], umbrales["abajo"], "arriba", "abajo", "centro")
         self._tiempo_ultimo_paso = None
 
-    # ==========================================================
-    # NAVEGACIÓN POR SALTOS (gesto de cabeza -> un paso en el grafo)
-    # ==========================================================
+    # --- Navegación por saltos ---
 
     def _umbrales(self):
         """Umbral de gesto POR DIRECCIÓN. Si hay calibración de esta sesión
@@ -433,13 +401,11 @@ class GazeStateController:
 
     def _zona_eje(self, delta, umbral_neg, umbral_pos, nombre_neg, nombre_pos, zona_anterior):
         """
-        Versión de un solo eje (X o Y) de la detección de gesto: en qué
-        sentido está apuntando la cabeza AHORA respecto al centro, como
-        fracción del umbral de ESE sentido (0 = en el centro, 1 = ya cruzó
-        el umbral). Histéresis: una vez que cuenta como "hacia nombre_neg"
-        (p. ej. izquierda), sigue contando como tal hasta que la cabeza
-        vuelve bastante cerca del centro — así no dispara un segundo paso
-        por quedarse justo en el borde del umbral.
+        Detección de gesto en un solo eje: hacia dónde apunta la cabeza
+        respecto al centro, en fracción del umbral de ese lado (1 = ya cruzó).
+        Con histéresis: una vez que cuenta como desviada sigue contando así
+        hasta volver bastante cerca del centro, para que quedarse justo en el
+        borde del umbral no dispare un segundo paso.
         """
         frac_neg = max(0.0, -delta / umbral_neg)
         frac_pos = max(0.0, delta / umbral_pos)
@@ -457,16 +423,10 @@ class GazeStateController:
         return "centro"
 
     def _margenes(self, dx, dy, umbrales):
-        """
-        Margen de "ya regresó al centro", medido contra el umbral del lado
-        hacia el que la cabeza está desviada AHORA (no contra el menor de los
-        dos): con umbrales asimétricos, usar el menor para ambos lados
-        volvería innecesariamente estricto el regreso desde el lado grande.
-
-        Nunca baja del temblor natural en reposo (medido en la calibración):
-        si el margen queda por debajo del ruido propio de la señal, la cabeza
-        vuelve al centro pero el sistema no lo reconoce y se queda bloqueado.
-        """
+        """Margen de "ya regresó al centro", contra el umbral del lado hacia
+        el que la cabeza está desviada ahora. Nunca baja del temblor en
+        reposo medido en la calibración: si quedara por debajo del ruido de
+        la señal, la cabeza vuelve al centro y el sistema no lo reconoce."""
         umbral_x = umbrales["izquierda"] if dx < 0 else umbrales["derecha"]
         umbral_y = umbrales["arriba"] if dy < 0 else umbrales["abajo"]
         holgura = config.get("navegacion_holgura_ruido", 1.6)
@@ -490,14 +450,11 @@ class GazeStateController:
 
     def _recuperar_centro(self, hx, hy, dx, dy, margen_x, margen_y, current_time):
         """
-        Red de seguridad contra quedarse atorado.
-
-        Si el centro de referencia queda mal (backend con otra escala, la
-        persona se reacomodó, un arranque con la cara a medio girar), la
-        cabeza queda permanentemente fuera del margen: no se dispara ningún
-        gesto nuevo y tampoco se re-arma nunca. Para distinguir eso de un
-        gesto en curso se exige que la cabeza lleve un rato QUIETA pero
-        desviada: un gesto de verdad se mueve, un centro mal puesto no.
+        Red de seguridad contra quedarse atorado. Si el centro quedó mal (la
+        persona se reacomodó, arrancó con la cara a medio girar), la cabeza
+        queda siempre fuera del margen y ya no se dispara ni se re-arma nada.
+        Se distingue de un gesto en curso exigiendo que lleve un rato QUIETA
+        pero desviada: un gesto se mueve, un centro mal puesto no.
         """
         ventana = float(config.get("navegacion_recuperacion_seg", 4.0))
         self._hist_pos.append((current_time, hx, hy))
@@ -536,19 +493,12 @@ class GazeStateController:
         if self._recuperar_centro(hx, hy, dx_act, dy_act, mx, my, current_time):
             return
 
-        # Pausa tras cada paso: solo TIEMPO, sin exigir posición.
-        #
-        # Antes también se exigía que la cabeza volviera dentro del margen en
-        # LOS DOS ejes, y encima se recentraba ahí. Eso atoraba: al encadenar
-        # gestos (bajar y luego girar) un eje siempre estaba fuera, así que
-        # nunca se cumplía la condición. Medido en una sesión real: 86 % del
-        # tiempo bloqueado, con esperas de hasta 14 s para una pausa
-        # configurada de 0.5 s.
-        #
-        # No hace falta: la histéresis por eje de _zona_eje ya obliga a
-        # volver cerca del centro antes de que ese eje pueda disparar otra
-        # vez, y lo hace de forma independiente para X y para Y. La pausa
-        # solo sirve para dar un respiro entre pasos.
+        # Pausa tras cada paso: solo tiempo, sin exigir posición. Exigir
+        # además que la cabeza volviera al margen en los DOS ejes atoraba al
+        # encadenar gestos (bajar y luego girar deja un eje fuera): medido,
+        # 86 % del tiempo bloqueado y esperas de 14 s para una pausa de 0.5 s.
+        # La histéresis por eje de _zona_eje ya obliga a volver al centro
+        # antes de que ese eje dispare otra vez.
         if self._tiempo_ultimo_paso is not None:
             if (current_time - self._tiempo_ultimo_paso) < config.get("navegacion_pausa_seg", 0.5):
                 return

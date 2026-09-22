@@ -1,17 +1,10 @@
 """
 Síntesis de voz (edge-tts + pygame), con caché y una cola en el mismo proceso.
 
-Antes, cada frase lanzaba un proceso de Python nuevo desde cero (arrancar
-el intérprete + reimportar todo) Y sintetizaba por internet cada vez,
-aunque fuera una frase que ya se había dicho antes ("Avanzando", "Sistema
-Activado", los nombres de los puntos de calibración, etc. son un
-vocabulario fijo que se repite todo el tiempo). Eso hacía que la voz se
-sintiera con varios segundos de retraso.
-
-Ahora: un solo hilo en segundo plano vive todo el programa y procesa una
-cola en orden (nunca se pisan dos frases), y el audio de cada frase se
-guarda en caché la primera vez que se dice — las siguientes veces se
-reproduce directo desde disco, sin esperar la red.
+El programa dice siempre las mismas frases: "Avanzando", "Sistema pausado",
+las órdenes para Alexa. Por eso cada audio se guarda en disco la primera vez
+y después se reproduce desde ahí, sin esperar a la red. Un único hilo en
+segundo plano atiende la cola en orden, así que dos frases nunca se pisan.
 """
 
 import os
@@ -25,61 +18,40 @@ import threading
 import edge_tts
 import pygame
 
-# Voz mexicana nativa: el acento coincide con el idioma en el que está
-# configurada la Alexa, que es lo que mejor reconoce su modelo de voz.
-# Además es la voz aguda de las dos mexicanas, lo que ayuda a que se
-# distinga del ruido grave de fondo (ventiladores, tráfico, la propia silla).
-# Alternativa lista para probar (una línea, la caché se regenera sola):
-#   es-MX-JorgeNeural   hombre, la otra voz mexicana disponible
+# Voz mexicana, igual que el idioma en que está configurada la Alexa: es lo
+# que mejor reconoce. La otra mexicana disponible es es-MX-JorgeNeural
+# (hombre); cambiar esta línea basta, la caché se regenera sola.
 VOZ = "es-MX-DaliaNeural"
 
-# Configuración pensada para que el Echo la entienda:
-#
-# - Velocidad y tono SIN tocar. Antes iban a "+10%" y "-15Hz": desplazar el
-#   tono corre los formantes (la huella acústica que distingue una vocal de
-#   otra) y cambiar la velocidad rompe el ritmo con el que la voz fue
-#   entrenada. Dejarlos neutros es lo que la hace sonar fluida.
-#
-# - Volumen un poco arriba. Es la única de las cuatro que sí conviene mover:
-#   no deforma la voz, solo mejora la relación señal/ruido frente al
-#   micrófono del Echo. No se sube más porque pasado cierto punto satura, y
-#   un audio recortado se reconoce PEOR que uno más bajo pero limpio.
+# Velocidad y tono van neutros a propósito. Mover el tono corre los formantes
+# (lo que distingue una vocal de otra) y cambiar la velocidad rompe el ritmo
+# con el que la voz fue entrenada; en las dos cosas Alexa entiende peor. El
+# volumen sí conviene subirlo un poco, porque no deforma nada y mejora la
+# señal frente al micrófono — pero no más, que saturado se reconoce peor.
 VELOCIDAD = "+0%"
 VOLUMEN = "+15%"
 TONO = "+0Hz"
 
-# Qué separa "Alexa" de la orden. Es lo que controla la pausa entre ambas.
+# Qué separa "Alexa" de la orden, o sea la pausa entre las dos. Medido sobre
+# "Alexa[sep] enciende rasuradora": con coma dura 3.00 s y no se oye pausa;
+# con punto, 3.88 s con ~0.9 s de silencio. Los puntos suspensivos y el punto
+# y coma no agregan nada.
 #
-# Medido con esta misma voz sobre "Alexa[sep] enciende rasuradora":
-#     ", "   -> 3.00 s, sin pausa audible (iba demasiado rápido)
-#     ". "   -> 3.88 s, pausa de ~0.9 s      <- lo que se usa
-#     "... " -> 3.00 s, no agrega nada
-#     "; "   -> 3.05 s, casi nada
-#
-# La alternativa era partir la frase en dos audios y esperar en medio, que
-# parecía dar control exacto del silencio. Medirlo mostró lo contrario: cada
-# clip suelto arrastra su propio relleno (1.15 s entre los dos), así que pedir
-# 0.25 s producía 1.45 s reales y un total de 4.45 s. Más pausa que el punto,
-# más lento, y con código extra. Un solo audio gana en todo.
+# Partir la frase en dos audios y esperar en medio parece dar control exacto,
+# pero sale peor: cada clip arrastra su propio relleno (1.15 s entre los dos),
+# así que pedir 0.25 s da 1.45 s reales. Un solo audio gana.
 SEPARADOR_ALEXA = ". "
 
 CACHE_DIR = "cache_voz"
 
 
-# ============================================================
-# CACHÉ DE AUDIO
-# ============================================================
+# --- Caché de audio ---
+
 
 def _archivo_cache(texto):
-    """
-    La clave incluye los ajustes de voz, no solo el texto.
-
-    Si dependiera solo del texto, cambiar de voz, velocidad o tono no
-    tendría ningún efecto audible: se seguiría reproduciendo el audio viejo
-    guardado con los ajustes anteriores, y habría que borrar la caché a mano
-    para notar el cambio. Así cada combinación tiene su propio archivo y el
-    cambio se aplica solo.
-    """
+    """La clave incluye los ajustes de voz, no solo el texto. Si dependiera
+    solo del texto, cambiar de voz o de tono no se oiría: seguiría sonando el
+    audio viejo y habría que borrar la caché a mano."""
     os.makedirs(CACHE_DIR, exist_ok=True)
     firma = f"{texto}|{VOZ}|{VELOCIDAD}|{VOLUMEN}|{TONO}"
     clave = hashlib.md5(firma.encode("utf-8")).hexdigest()
@@ -119,10 +91,6 @@ def _con_pausa(texto):
     return texto
 
 
-# ============================================================
-# REPRODUCIR
-# ============================================================
-
 def _reproducir(archivo):
     pygame.mixer.music.load(archivo)
     pygame.mixer.music.play()
@@ -130,9 +98,7 @@ def _reproducir(archivo):
         time.sleep(0.02)
 
 
-# ============================================================
-# COLA EN SEGUNDO PLANO (un solo hilo, dentro del mismo proceso)
-# ============================================================
+# --- Cola en segundo plano ---
 
 _cola = queue.Queue()
 _hilo_iniciado = False
@@ -144,17 +110,19 @@ def _procesar_cola():
     while True:
         texto = _cola.get()
         try:
-            # La frase entera va como UN solo audio; la pausa la pone el
-            # propio sintetizador a partir de la puntuación, con entonación
-            # natural y sin el relleno que arrastran los clips sueltos.
             _reproducir(_asegurar_audio(_con_pausa(texto)))
         except Exception as e:
+            # Que falle la voz no puede tumbar el hilo: si se muere, el
+            # programa deja de hablar para siempre sin avisar. Se reporta y
+            # se sigue con la siguiente frase.
             print(f"[voz] Error reproduciendo '{texto}': {e}")
         finally:
             _cola.task_done()
 
 
 def hablar_en_segundo_plano(texto):
+    """Encola una frase y regresa de inmediato. Lo llama el hilo de la
+    interfaz, que no puede quedarse esperando a que termine el audio."""
     global _hilo_iniciado
     if not _hilo_iniciado:
         with _lock_hilo:
@@ -164,9 +132,7 @@ def hablar_en_segundo_plano(texto):
     _cola.put(texto)
 
 
-# ============================================================
-# PRUEBA MANUAL: python modulos/voice_synth.py "texto a decir"
-# ============================================================
+# Prueba suelta: python modulos/voice_synth.py "texto a decir"
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:

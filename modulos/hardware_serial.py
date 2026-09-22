@@ -1,3 +1,5 @@
+"""Comunicación serial con la silla Airwheel."""
+
 import json
 import time
 import serial
@@ -36,8 +38,10 @@ class DomoticaController:
     def __init__(self, puerto='COM5', baudrate=9600):
         try:
             self.arduino = serial.Serial(puerto, baudrate, timeout=1)
-            time.sleep(2)
+            time.sleep(2)  # la tarjeta se reinicia al abrir el puerto
         except serial.SerialException:
+            # Sin puerto el programa sigue corriendo en simulación: así se
+            # puede trabajar en la interfaz sin tener la silla enchufada.
             self.arduino = None
             print("Advertencia: Entorno domótico no conectado.")
 
@@ -56,6 +60,9 @@ class DomoticaController:
     def regresar(self):
         self._enviar_duty(self.NEUTRO - self.DELTA_AVANCE, self.NEUTRO)
 
+    # El signo del canal horizontal está comprobado con la silla de verdad:
+    # sumar gira a la izquierda. Invertirlo es un error peligroso y no se
+    # nota leyendo el código, solo manejando.
     def girar_izquierda(self):
         self._enviar_duty(self.NEUTRO, self.NEUTRO + self.DELTA_GIRO)
 
