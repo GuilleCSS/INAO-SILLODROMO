@@ -176,7 +176,10 @@ class TileButton(QPushButton):
 
         r = QRectF(self.rect()).adjusted(4, 4, -4, -4)
         w, h = r.width(), r.height()
-        radio = min(22.0, min(w, h) * 0.14)
+        # Radio bajo a propósito: junto con el espaciado mínimo entre tiles
+        # en la interfaz, se leen como zonas grandes contiguas en vez de
+        # botones sueltos, más fáciles de acertar con el cursor.
+        radio = min(12.0, min(w, h) * 0.10)
 
         if activo:
             for i, a in enumerate((80, 45, 20)):

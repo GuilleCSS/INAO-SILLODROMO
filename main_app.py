@@ -118,6 +118,7 @@ class ControlCentral(QMainWindow):
         self.hilo_camara = None
         self._ultimo_hx = 0.0
         self._ultimo_hy = 0.0
+        self._ultimo_rostro = False
         self._historial_hxhy = deque(maxlen=45)  # ~1.5 s, para el recentrado rápido
         self._dialogo_calibracion = None
 
@@ -162,7 +163,7 @@ class ControlCentral(QMainWindow):
         self.detener_movimiento()
         dialogo = DialogoCalibracion(self)
         self._dialogo_calibracion = dialogo
-        dialogo.actualizar_lectura(self._ultimo_hx, self._ultimo_hy)
+        dialogo.actualizar_lectura(self._ultimo_hx, self._ultimo_hy, self._ultimo_rostro)
         dialogo.exec_()
         self._dialogo_calibracion = None
 
@@ -365,9 +366,10 @@ class ControlCentral(QMainWindow):
     def actualizar_estado(self, e):
         self._ultimo_frame = time.time()
         self._ultimo_hx, self._ultimo_hy = e["hx"], e["hy"]
+        self._ultimo_rostro = e["rostro"]
         self._historial_hxhy.append((e["hx"], e["hy"]))
         if self._dialogo_calibracion is not None:
-            self._dialogo_calibracion.actualizar_lectura(e["hx"], e["hy"])
+            self._dialogo_calibracion.actualizar_lectura(e["hx"], e["hy"], e["rostro"])
         activo = e["rostro"] and e["sistema"]
 
         if not e["rostro"]:

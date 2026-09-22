@@ -1,6 +1,7 @@
 import time
 import json
 import os
+import math
 from .mouse_action import (
     mover_cursor, mover_cursor_absoluto, presionar_clic, soltar_clic,
     posicion_cursor, tamano_pantalla,
@@ -11,6 +12,59 @@ with open('config.json', 'r') as f:
     config = json.load(f)
 
 RUTA_CALIBRACION = "calibracion.json"
+
+
+# ============================================================
+# FILTRO 1€ (Casiez, Roussel y Vogel, 2012)
+# ============================================================
+#
+# Es el filtro de referencia para apuntadores/cursores derivados de una
+# señal con ruido (cámara, sensores de movimiento): suaviza fuerte cuando
+# la señal casi no cambia (mata el temblor de la cámara con la cabeza
+# quieta) y afloja el suavizado cuanto más rápido se mueve la señal (no se
+# siente pesado al mover la cabeza a propósito). Reemplaza los parches
+# anteriores (EMA con umbral fijo + zona muerta en píxeles) por un único
+# filtro con base matemática, autoadaptado a la velocidad real del
+# movimiento en vez de un umbral arbitrario.
+
+class FiltroUnoEuro:
+    def __init__(self, mincutoff=1.0, beta=0.0, dcutoff=1.0):
+        self.mincutoff = mincutoff
+        self.beta = beta
+        self.dcutoff = dcutoff
+        self._x_prev = None
+        self._dx_prev = 0.0
+        self._t_prev = None
+
+    @staticmethod
+    def _alpha(frecuencia, cutoff):
+        tau = 1.0 / (2 * math.pi * cutoff)
+        te = 1.0 / frecuencia
+        return 1.0 / (1.0 + tau / te)
+
+    def filtrar(self, x, t):
+        if self._t_prev is None:
+            self._x_prev = x
+            self._t_prev = t
+            return x
+
+        frecuencia = 1.0 / max(t - self._t_prev, 1e-3)
+        self._t_prev = t
+
+        # Derivada suavizada: qué tan rápido se está moviendo la señal ahora.
+        dx = (x - self._x_prev) * frecuencia
+        a_d = self._alpha(frecuencia, self.dcutoff)
+        dx_suave = a_d * dx + (1 - a_d) * self._dx_prev
+
+        # El cutoff sube con la velocidad -> menos suavizado cuando hay
+        # movimiento real, más suavizado cuando está prácticamente quieto.
+        cutoff = self.mincutoff + self.beta * abs(dx_suave)
+        a = self._alpha(frecuencia, cutoff)
+        x_suave = a * x + (1 - a) * self._x_prev
+
+        self._x_prev = x_suave
+        self._dx_prev = dx_suave
+        return x_suave
 
 
 # ============================================================
@@ -26,11 +80,11 @@ class Calibrador:
 
     PUNTOS = ["centro", "izquierda", "derecha", "arriba", "abajo"]
     ETIQUETAS = {
-        "centro": "Mira al frente, relajado",
-        "izquierda": "Gira la cabeza cómodamente a la izquierda",
-        "derecha": "Gira la cabeza cómodamente a la derecha",
-        "arriba": "Inclina la cabeza hacia arriba",
-        "abajo": "Inclina la cabeza hacia abajo",
+        "centro": "Apunta la cabeza hacia el punto del centro",
+        "izquierda": "Gira la cabeza hasta apuntar al punto de la izquierda",
+        "derecha": "Gira la cabeza hasta apuntar al punto de la derecha",
+        "arriba": "Inclina la cabeza hasta apuntar al punto de arriba",
+        "abajo": "Inclina la cabeza hasta apuntar al punto de abajo",
     }
 
     def __init__(self):
@@ -115,6 +169,7 @@ class GazeStateController:
         # Calibración para control por posición absoluta
         self.calibracion = cargar_calibracion()
         self.ancho_pantalla, self.alto_pantalla = tamano_pantalla()
+        self._crear_filtros()
 
     # --------------------------------------------------------
     # OBJETIVOS PARA EL IMÁN DE PRECISIÓN / CALIBRACIÓN
@@ -124,9 +179,19 @@ class GazeStateController:
         """Actualiza los botones "imantados" (cx, cy, radio) en coords. de pantalla."""
         self._objetivos = objetivos or []
 
+    def _crear_filtros(self):
+        mincutoff = config.get("cursor_mincutoff", 0.8)
+        beta = config.get("cursor_beta", 0.4)
+        dcutoff = config.get("cursor_dcutoff", 1.0)
+        self._filtro_x = FiltroUnoEuro(mincutoff, beta, dcutoff)
+        self._filtro_y = FiltroUnoEuro(mincutoff, beta, dcutoff)
+
     def recargar_calibracion(self):
-        """Vuelve a leer calibracion.json (se llama al terminar el asistente)."""
+        """Vuelve a leer calibracion.json (se llama al terminar el asistente).
+        Reinicia los filtros para que no arrastren la posición de antes de
+        recalibrar."""
         self.calibracion = cargar_calibracion()
+        self._crear_filtros()
 
     # --------------------------------------------------------
     # CLIC SOSTENIDO
@@ -209,8 +274,15 @@ class GazeStateController:
                 self.blink_action_triggered = True
                 if not self.system_enabled:
                     self.soltar()
-                estado = "Activado" if self.system_enabled else "Pausado"
-                hablar_en_segundo_plano(f"Sistema {estado}")
+                    hablar_en_segundo_plano("Sistema pausado")
+                else:
+                    # En este instante los ojos siguen cerrados (recién se
+                    # cumplió el tiempo sostenido) y el sistema ya está
+                    # activo de nuevo — sin este aviso, la persona no sabe
+                    # que ya puede (y debe) abrir los ojos, y si los sigue
+                    # cerrando por costumbre puede volver a pausar el sistema
+                    # sin querer al cumplirse otro `blink_hold_time`.
+                    hablar_en_segundo_plano("Sistema activado. Abre los ojos.")
         else:
             self.blink_start_time = None
             self.blink_action_triggered = False
@@ -222,7 +294,11 @@ class GazeStateController:
         self.ultima_apertura = y_57 - y_51
         self._actualizar_boca(self.ultima_apertura)
 
-        # 3. SUAVIZADO EMA PARA LA CABEZA
+        # 3. SUAVIZADO EMA LIGERO PARA LA CABEZA
+        # Solo de apoyo (modo por velocidad de respaldo + etiqueta de
+        # dirección). El filtrado fino que de verdad define qué tan quieto
+        # se ve el cursor pasa por el filtro 1€ del paso 4, sobre la
+        # posición final en píxeles.
         alpha = config.get("suavizado_alpha", 0.2)
         self.hx_suavizado = (alpha * hx) + ((1 - alpha) * self.hx_suavizado)
         self.hy_suavizado = (alpha * hy) + ((1 - alpha) * self.hy_suavizado)
@@ -230,6 +306,8 @@ class GazeStateController:
         # 4. POSICIÓN DEL CURSOR (el cursor se mueve aunque el clic esté presionado)
         if self.calibracion:
             x, y = self._posicion_absoluta(self.hx_suavizado, self.hy_suavizado)
+            x = self._filtro_x.filtrar(x, current_time)
+            y = self._filtro_y.filtrar(y, current_time)
             x, y = self._aplicar_iman_absoluto(x, y)
             mover_cursor_absoluto(x, y)
             x_dir, y_dir = self._direccion_absoluta(self.hx_suavizado, self.hy_suavizado)
