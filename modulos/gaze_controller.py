@@ -287,8 +287,26 @@ class GazeStateController:
         idx = min(len(muestras) - 1, int(len(muestras) * percentil))
         self._apertura_base = muestras[idx]
 
-    def _actualizar_boca(self, apertura):
+    def _actualizar_boca(self, apertura, ojos_cerrados=False, tiempo_ojos_cerrados=0.0):
         self._refrescar_apertura_base(apertura)
+
+        # Con los ojos cerrados no se hace clic: la persona no está viendo
+        # sobre qué botón está el foco, y con la silla eso significa ponerla
+        # en marcha a ciegas. Un bostezo (ojos cerrados + boca abierta) es
+        # justo la combinación que hay que evitar.
+        if ojos_cerrados:
+            if not self.clic_mantenido:
+                # No se arranca un clic nuevo. Se reinicia el contador para
+                # que al abrir los ojos no dispare por frames acumulados.
+                self._frames_abierta = 0
+                return
+            # Un clic YA puesto sobrevive a un parpadeo normal (~0.2 s): si
+            # se soltara con cada parpadeo, no se podría avanzar de forma
+            # sostenida. Pero si los ojos siguen cerrados más allá de eso,
+            # se suelta por seguridad.
+            if tiempo_ojos_cerrados >= config.get("clic_ojos_gracia_seg", 0.6):
+                self.soltar()
+                return
 
         # Umbrales como margen por encima de la boca cerrada real de esta
         # persona (auto-ajustada), no números absolutos que rara vez
@@ -353,26 +371,32 @@ class GazeStateController:
 
         self._ultimo_rostro_ok = current_time
 
-        # Apertura de boca, calculada antes del mecanismo de pausa: al abrir
-        # la boca, OpenFace a veces malinterpreta la forma de la cara y da
-        # falsos positivos en el AU45 (ojos cerrados) — así que mientras la
-        # boca esté abierta, NO cuenta como parpadeo para pausar el sistema.
         self.ultima_apertura = y_57 - y_51
-        if self._apertura_base is not None:
-            umbral_boca_abierta = self._apertura_base + config.get("boca_delta_off", 6.0)
-            boca_abierta_ahora = self.ultima_apertura > umbral_boca_abierta
-        else:
-            boca_abierta_ahora = False  # todavía no se conoce la base (primer frame)
-        is_eyes_closed = (au45_c >= 1.0) and not boca_abierta_ahora
+
+        # El estado de los ojos NO se condiciona a la boca.
+        #
+        # Antes se ignoraba "ojos cerrados" mientras la boca estuviera
+        # abierta, porque OpenFace malinterpretaba la cara y daba falsos
+        # positivos de AU45 al abrirla. Aquí la señal de ojos sale del EAR,
+        # calculado con los puntos de los párpados, que no se mueven al
+        # abrir la boca (medido en una sesión real: EAR 0.28 con la boca
+        # abierta contra 0.25 cerrada, ambos muy por encima del umbral).
+        #
+        # Mantener aquel guardia era peligroso: con los ojos cerrados y la
+        # boca abierta el sistema no pausaba, no disparaba la emergencia y
+        # SÍ hacía clic. Un bostezo es exactamente esa combinación.
+        is_eyes_closed = (au45_c >= 1.0)
 
         # 1. MECANISMO DE PAUSA (ojos cerrados) + EMERGENCIA (ojos cerrados
         # mucho más tiempo, un umbral bien separado del de pausa para que no
         # se confundan).
+        tiempo_ojos_cerrados = 0.0
         if is_eyes_closed:
             if self.blink_start_time is None:
                 self.blink_start_time = current_time
 
             elapsed = current_time - self.blink_start_time
+            tiempo_ojos_cerrados = elapsed
             if elapsed >= config["blink_hold_time"] and not self.blink_action_triggered:
                 self.system_enabled = not self.system_enabled
                 self.blink_action_triggered = True
@@ -403,7 +427,7 @@ class GazeStateController:
             return self._estado(rostro=True)
 
         # 2. CLIC SOSTENIDO POR BOCA (sobre el botón donde está el foco)
-        self._actualizar_boca(self.ultima_apertura)
+        self._actualizar_boca(self.ultima_apertura, is_eyes_closed, tiempo_ojos_cerrados)
 
         # 3. SUAVIZADO EMA LIGERO (solo para no reaccionar a un frame suelto con ruido)
         alpha = config.get("suavizado_alpha", 0.2)

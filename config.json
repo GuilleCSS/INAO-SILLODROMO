@@ -70,5 +70,6 @@
     "calib_fraccion_umbral": 0.35,
     "calib_umbral_minimo": 0.12,
     "calib_umbral_veces_ruido": 3.0,
-    "navegacion_holgura_ruido": 1.6
+    "navegacion_holgura_ruido": 1.6,
+    "clic_ojos_gracia_seg": 0.6
 }
